@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: logpulse-redis
+    ports:
+      - "6379:6379"
+
+  mongodb:
+    image: mongo:6.0
+    container_name: logpulse-mongo
+    ports:
+      - "27017:27017"
+
+  backend-api:
+    build: ./backend
+    container_name: logpulse-api
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - MONGO_URI=mongodb://mongodb:27017/logpulse
+      - REDIS_URL=redis://redis:6379
+      - CORS_ORIGIN=http://localhost:5173
+    depends_on:
+      - redis
+      - mongodb
+    command: npm run dev:server
+
+  backend-worker:
+    build: ./backend
+    container_name: logpulse-worker
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/logpulse
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - mongodb
+    command: npm run dev:worker
+
+  frontend:
+    build: ./frontend
+    container_name: logpulse-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend-api
