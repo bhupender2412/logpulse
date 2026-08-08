@@ -1,16 +1,28 @@
 {
   "name": "logpulse-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "LogPulse Real-Time Log Ingestion Platform",
   "main": "dist/server.js",
+  "type": "commonjs",
   "scripts": {
     "dev:server": "tsx watch src/server.ts",
-    "dev:worker": "tsx watch src/worker.ts"
+    "dev:worker": "tsx watch src/worker.ts",
+
+    "build": "tsc",
+
+    "start": "node dist/server.js",
+
+    "worker": "node dist/worker.js"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "logs",
+    "monitoring",
+    "socketio",
+    "mongodb",
+    "redis"
+  ],
+  "author": "Bhupender Singh",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "axios": "^1.19.0",
     "cors": "^2.8.6",

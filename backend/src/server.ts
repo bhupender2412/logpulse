@@ -50,7 +50,7 @@ app.get("/api/health", async (req, res) => {
     projectId: z.string().min(1),
     level: z.enum(["info", "warn", "error", "fatal"]),
     message: z.string().min(1),
-    metadata: z.record(z.any()).optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
   });
 /* ========================= Log Ingestion Endpoint ========================= */ app.post(
   "/api/v1/logs",
