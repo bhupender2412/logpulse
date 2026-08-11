@@ -1,3 +1,4 @@
+import { LogModel } from "./models/Log";
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -7,7 +8,7 @@ import { z } from "zod";
 
 import { connectDB } from "./config/db";
 import { redisClient, connectRedis } from "./config/redis";
-import { LogModel } from "./models/Log";
+// import { LogModel } from "./models/Log";
 
 dotenv.config();
 
