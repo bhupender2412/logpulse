@@ -1,41 +1,22 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
 } from "react";
 import { io, Socket } from "socket.io-client";
 
-import LogsOverTimeChart, {
+import {
+  getLogStats,
+  getLogTimeSeries,
+  getLogs,
+  type Log,
+  type LogLevel,
+  type TimeRange,
   type TimeSeriesPoint,
-} from "../components/charts/LogsOverTimeChart";
+} from "../api/logsApi";
 
-interface LogEvent {
-  id?: string;
-  _id?: string;
-  projectId: string;
-  level:
-    | "info"
-    | "warn"
-    | "error"
-    | "fatal";
-  message: string;
-  metadata?: Record<string, unknown>;
-  timestamp: string;
-  createdAt?: string;
-}
-
-interface LogsResponse {
-  success: boolean;
-  count: number;
-  logs: LogEvent[];
-}
-
-type TimeRange =
-  | "1h"
-  | "6h"
-  | "24h"
-  | "7d"
-  | "all";
+import LogsOverTimeChart from "../components/charts/LogsOverTimeChart";
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -45,25 +26,57 @@ const socket: Socket = io(API_URL, {
   transports: ["websocket"],
 });
 
+const PAGE_SIZE = 25;
+
+interface DashboardStats {
+  total: number;
+  info: number;
+  warn: number;
+  error: number;
+  fatal: number;
+  errorRate: number;
+}
+
+const emptyStats: DashboardStats = {
+  total: 0,
+  info: 0,
+  warn: 0,
+  error: 0,
+  fatal: 0,
+  errorRate: 0,
+};
+
 export default function Dashboard() {
-  const [logs, setLogs] = useState<LogEvent[]>(
-    []
-  );
+  // ==========================================================
+  // LOGS / PAGINATION
+  // ==========================================================
 
-  const [connected, setConnected] =
-    useState(false);
-
-  const [loading, setLoading] =
+  const [logs, setLogs] = useState<Log[]>([]);
+  const [loadingLogs, setLoadingLogs] =
     useState(true);
 
-  const [error, setError] =
-    useState("");
+  const [page, setPage] = useState(1);
+  const [totalLogs, setTotalLogs] = useState(0);
+  const [totalPages, setTotalPages] =
+    useState(0);
+
+  const [hasNextPage, setHasNextPage] =
+    useState(false);
+
+  const [
+    hasPreviousPage,
+    setHasPreviousPage,
+  ] = useState(false);
+
+  // ==========================================================
+  // FILTERS
+  // ==========================================================
 
   const [searchTerm, setSearchTerm] =
     useState("");
 
   const [selectedLevel, setSelectedLevel] =
-    useState("all");
+    useState<LogLevel | "all">("all");
 
   const [
     selectedProject,
@@ -71,58 +84,236 @@ export default function Dashboard() {
   ] = useState("all");
 
   const [timeRange, setTimeRange] =
-  useState<TimeRange>("7d");
+    useState<TimeRange>("7d");
 
   // ==========================================================
-  // FETCH LOGS
+  // ANALYTICS
   // ==========================================================
 
-  useEffect(() => {
-    const fetchLogs = async () => {
+  const [stats, setStats] =
+    useState<DashboardStats>(
+      emptyStats
+    );
+
+  const [
+    timeSeries,
+    setTimeSeries,
+  ] = useState<TimeSeriesPoint[]>([]);
+
+  const [loadingStats, setLoadingStats] =
+    useState(true);
+
+  const [
+    loadingTimeSeries,
+    setLoadingTimeSeries,
+  ] = useState(true);
+
+  // ==========================================================
+  // GENERAL
+  // ==========================================================
+
+  const [connected, setConnected] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  // ==========================================================
+  // PROJECTS
+  // ==========================================================
+
+  const projects = useMemo(() => {
+    return Array.from(
+      new Set(
+        logs
+          .map(
+            (log) =>
+              log.projectId
+          )
+          .filter(Boolean)
+      )
+    ).sort();
+  }, [logs]);
+
+  // ==========================================================
+  // LOAD LOGS
+  // ==========================================================
+
+  const loadLogs = useCallback(
+    async (
+      requestedPage: number
+    ) => {
       try {
-        setLoading(true);
+        setLoadingLogs(true);
         setError("");
 
-        const response = await fetch(
-          `${API_URL}/api/v1/logs`
+        const response =
+          await getLogs({
+            page: requestedPage,
+            limit: PAGE_SIZE,
+            search: searchTerm,
+            projectId:
+              selectedProject,
+            level:
+              selectedLevel,
+          });
+
+        setLogs(response.logs);
+        setPage(response.page);
+        setTotalLogs(response.total);
+        setTotalPages(
+          response.totalPages
         );
 
-        if (!response.ok) {
-          throw new Error(
-            `Failed to fetch logs: ${response.status}`
-          );
-        }
+        setHasNextPage(
+          response.hasNextPage
+        );
 
-        const data: LogsResponse =
-          await response.json();
-
-        if (!data.success) {
-          throw new Error(
-            "Backend returned an error"
-          );
-        }
-
-        setLogs(
-          Array.isArray(data.logs)
-            ? data.logs
-            : []
+        setHasPreviousPage(
+          response.hasPreviousPage
         );
       } catch (err) {
         console.error(
-          "Fetch Logs Error:",
+          "Load Logs Error:",
           err
         );
 
         setError(
-          "Unable to load logs from the backend."
+          err instanceof Error
+            ? err.message
+            : "Failed to load logs"
         );
-      } finally {
-        setLoading(false);
-      }
-    };
 
-    fetchLogs();
-  }, []);
+        setLogs([]);
+        setTotalLogs(0);
+        setTotalPages(0);
+        setHasNextPage(false);
+        setHasPreviousPage(false);
+      } finally {
+        setLoadingLogs(false);
+      }
+    },
+    [
+      searchTerm,
+      selectedProject,
+      selectedLevel,
+    ]
+  );
+
+  // ==========================================================
+  // LOAD STATS
+  // ==========================================================
+
+  const loadStats = useCallback(
+    async () => {
+      try {
+        setLoadingStats(true);
+
+        const response =
+          await getLogStats({
+            range: timeRange,
+            search: searchTerm,
+            projectId:
+              selectedProject,
+            level:
+              selectedLevel,
+          });
+
+        setStats({
+          total: response.total,
+          info: response.info,
+          warn: response.warn,
+          error: response.error,
+          fatal: response.fatal,
+          errorRate:
+            response.errorRate,
+        });
+      } catch (err) {
+        console.error(
+          "Load Stats Error:",
+          err
+        );
+
+        setStats(emptyStats);
+      } finally {
+        setLoadingStats(false);
+      }
+    },
+    [
+      timeRange,
+      searchTerm,
+      selectedProject,
+      selectedLevel,
+    ]
+  );
+
+  // ==========================================================
+  // LOAD TIME SERIES
+  // ==========================================================
+
+  const loadTimeSeries =
+    useCallback(async () => {
+      try {
+        setLoadingTimeSeries(
+          true
+        );
+
+        const response =
+          await getLogTimeSeries({
+            range: timeRange,
+            search: searchTerm,
+            projectId:
+              selectedProject,
+            level:
+              selectedLevel,
+          });
+
+        setTimeSeries(
+          response.data
+        );
+      } catch (err) {
+        console.error(
+          "Load Time Series Error:",
+          err
+        );
+
+        setTimeSeries([]);
+      } finally {
+        setLoadingTimeSeries(
+          false
+        );
+      }
+    }, [
+      timeRange,
+      searchTerm,
+      selectedProject,
+      selectedLevel,
+    ]);
+
+  // ==========================================================
+  // RELOAD WHEN FILTERS CHANGE
+  // ==========================================================
+
+  useEffect(() => {
+    setPage(1);
+  }, [
+    searchTerm,
+    selectedProject,
+    selectedLevel,
+    timeRange,
+  ]);
+
+  useEffect(() => {
+    loadLogs(page);
+  }, [page, loadLogs]);
+
+  useEffect(() => {
+    loadStats();
+    loadTimeSeries();
+  }, [
+    loadStats,
+    loadTimeSeries,
+  ]);
 
   // ==========================================================
   // SOCKET.IO
@@ -147,41 +338,45 @@ export default function Dashboard() {
     };
 
     const handleNewLog = (
-      newLog: LogEvent
+      newLog: Log
     ) => {
       console.log(
         "📥 New Log:",
         newLog
       );
 
+      // IMPORTANT:
+      // Log uses _id, not id.
       setLogs((previousLogs) => {
         const newId =
-          newLog.id ||
-          newLog._id ||
-          `${newLog.timestamp}-${newLog.projectId}-${newLog.message}`;
+          newLog._id;
 
-        const alreadyExists =
+        const exists =
           previousLogs.some(
             (log) =>
-              (log.id || log._id) ===
-              newId
+              log._id === newId
           );
 
-        if (alreadyExists) {
+        if (exists) {
           return previousLogs;
         }
 
         return [
-          {
-            ...newLog,
-            id:
-              newLog.id ||
-              newLog._id ||
-              newId,
-          },
+          newLog,
           ...previousLogs,
-        ].slice(0, 100);
+        ].slice(
+          0,
+          PAGE_SIZE
+        );
       });
+
+      // Refresh backend-driven analytics.
+      void loadStats();
+      void loadTimeSeries();
+
+      // Refresh current page so total/page metadata
+      // remains authoritative from MongoDB.
+      void loadLogs(page);
     };
 
     socket.on(
@@ -219,205 +414,44 @@ export default function Dashboard() {
         handleNewLog
       );
     };
-  }, []);
-
-  // ==========================================================
-  // PROJECT LIST
-  // ==========================================================
-
-  const projects = useMemo(() => {
-    const values = logs
-      .map(
-        (log) =>
-          log.projectId
-      )
-      .filter(Boolean);
-
-    return [
-      "all",
-      ...Array.from(
-        new Set(values)
-      ).sort(),
-    ];
-  }, [logs]);
-
-  // ==========================================================
-  // FILTER LOGS
-  // ==========================================================
-
-  const filteredLogs = useMemo(() => {
-    const search =
-      searchTerm
-        .trim()
-        .toLowerCase();
-
-    return logs.filter((log) => {
-      const matchesSearch =
-        search === "" ||
-        log.message
-          .toLowerCase()
-          .includes(search) ||
-        log.projectId
-          .toLowerCase()
-          .includes(search) ||
-        log.level
-          .toLowerCase()
-          .includes(search);
-
-      const matchesLevel =
-        selectedLevel === "all" ||
-        log.level === selectedLevel;
-
-      const matchesProject =
-        selectedProject === "all" ||
-        log.projectId ===
-          selectedProject;
-
-      return (
-        matchesSearch &&
-        matchesLevel &&
-        matchesProject
-      );
-    });
   }, [
-    logs,
-    searchTerm,
-    selectedLevel,
-    selectedProject,
+    loadLogs,
+    loadStats,
+    loadTimeSeries,
+    page,
   ]);
-
-  // ==========================================================
-  // TIME RANGE
-  // ==========================================================
-
-  const timeRangeMs = useMemo(() => {
-    switch (timeRange) {
-      case "1h":
-        return 60 * 60 * 1000;
-
-      case "6h":
-        return 6 * 60 * 60 * 1000;
-
-      case "24h":
-        return 24 * 60 * 60 * 1000;
-
-      case "7d":
-        return 7 * 24 * 60 * 60 * 1000;
-
-      case "all":
-      default:
-        return 0;
-    }
-  }, [timeRange]);
-
-  // ==========================================================
-  // TIME-FILTERED LOGS
-  // ==========================================================
-
-  const timeFilteredLogs = useMemo(() => {
-    if (timeRangeMs === 0) {
-      return filteredLogs;
-    }
-
-    const cutoff =
-      Date.now() - timeRangeMs;
-
-    return filteredLogs.filter(
-      (log) => {
-        const timestamp = new Date(
-          log.timestamp
-        ).getTime();
-
-        return (
-          !Number.isNaN(timestamp) &&
-          timestamp >= cutoff
-        );
-      }
-    );
-  }, [
-    filteredLogs,
-    timeRangeMs,
-  ]);
-
-  // ==========================================================
-  // STATISTICS
-  // ==========================================================
-
-  const stats = useMemo(() => {
-    const total =
-      timeFilteredLogs.length;
-
-    const info =
-      timeFilteredLogs.filter(
-        (log) =>
-          log.level === "info"
-      ).length;
-
-    const warn =
-      timeFilteredLogs.filter(
-        (log) =>
-          log.level === "warn"
-      ).length;
-
-    const error =
-      timeFilteredLogs.filter(
-        (log) =>
-          log.level === "error"
-      ).length;
-
-    const fatal =
-      timeFilteredLogs.filter(
-        (log) =>
-          log.level === "fatal"
-      ).length;
-
-    const serious =
-      error + fatal;
-
-    const errorRate =
-      total === 0
-        ? 0
-        : (serious / total) * 100;
-
-    return {
-      total,
-      info,
-      warn,
-      error,
-      fatal,
-      errorRate,
-    };
-  }, [timeFilteredLogs]);
 
   // ==========================================================
   // PROJECT ACTIVITY
   // ==========================================================
 
-  const projectActivity = useMemo(() => {
-    const counts: Record<
-      string,
-      number
-    > = {};
+  const projectActivity =
+    useMemo(() => {
+      const counts: Record<
+        string,
+        number
+      > = {};
 
-    timeFilteredLogs.forEach((log) => {
-      counts[log.projectId] =
-        (counts[log.projectId] || 0) +
-        1;
-    });
+      logs.forEach((log) => {
+        counts[log.projectId] =
+          (counts[
+            log.projectId
+          ] || 0) + 1;
+      });
 
-    return Object.entries(counts)
-      .map(
-        ([project, count]) => ({
-          project,
-          count,
-        })
-      )
-      .sort(
-        (a, b) =>
-          b.count - a.count
-      )
-      .slice(0, 8);
-  }, [timeFilteredLogs]);
+      return Object.entries(counts)
+        .map(
+          ([project, count]) => ({
+            project,
+            count,
+          })
+        )
+        .sort(
+          (a, b) =>
+            b.count - a.count
+        )
+        .slice(0, 8);
+    }, [logs]);
 
   const maxProjectCount =
     projectActivity.length > 0
@@ -430,224 +464,21 @@ export default function Dashboard() {
       : 1;
 
   // ==========================================================
-  // TIME-SERIES DATA
+  // TIME SERIES DATA
   // ==========================================================
 
-  const timeSeriesData =
-    useMemo<TimeSeriesPoint[]>(() => {
-      if (
-        timeFilteredLogs.length ===
-        0
-      ) {
-        return [];
-      }
-
-      const now = new Date();
-
-      let bucketCount = 24;
-
-      let bucketSizeMs =
-        60 * 60 * 1000;
-
-      if (timeRange === "1h") {
-        bucketCount = 12;
-        bucketSizeMs =
-          5 * 60 * 1000;
-      }
-
-      if (timeRange === "6h") {
-        bucketCount = 12;
-        bucketSizeMs =
-          30 * 60 * 1000;
-      }
-
-      if (timeRange === "24h") {
-        bucketCount = 24;
-        bucketSizeMs =
-          60 * 60 * 1000;
-      }
-
-      if (timeRange === "7d") {
-        bucketCount = 14;
-        bucketSizeMs =
-          12 * 60 * 60 * 1000;
-      }
-
-      if (timeRange === "all") {
-        const timestamps =
-          timeFilteredLogs
-            .map((log) =>
-              new Date(
-                log.timestamp
-              ).getTime()
-            )
-            .filter((value) =>
-              Number.isFinite(value)
-            );
-
-        if (
-          timestamps.length ===
-          0
-        ) {
-          return [];
-        }
-
-        const oldest =
-          Math.min(...timestamps);
-
-        const newest =
-          Math.max(...timestamps);
-
-        const duration =
-          newest - oldest;
-
-        if (
-          duration <=
-          24 * 60 * 60 * 1000
-        ) {
-          bucketCount = 24;
-          bucketSizeMs =
-            60 * 60 * 1000;
-        } else {
-          bucketCount = 14;
-          bucketSizeMs = Math.max(
-            Math.ceil(
-              duration /
-                bucketCount
-            ),
-            60 * 60 * 1000
-          );
-        }
-      }
-
-      const startTime =
-        timeRange === "all"
-          ? new Date(
-              Math.min(
-                ...timeFilteredLogs.map(
-                  (log) =>
-                    new Date(
-                      log.timestamp
-                    ).getTime()
-                )
-              )
-            ).getTime()
-          : now.getTime() -
-            bucketCount *
-              bucketSizeMs;
-
-      const buckets =
-        Array.from(
-          {
-            length:
-              bucketCount,
-          },
-          (_, index) => {
-            const bucketStart =
-              startTime +
-              index *
-                bucketSizeMs;
-
-            return {
-              timestamp:
-                bucketStart,
-              label:
-                formatBucketLabel(
-                  bucketStart,
-                  timeRange,
-                  bucketCount
-                ),
-              info: 0,
-              warn: 0,
-              error: 0,
-              fatal: 0,
-            };
-          }
-        );
-
-      timeFilteredLogs.forEach(
-        (log) => {
-          const timestamp =
-            new Date(
-              log.timestamp
-            ).getTime();
-
-          if (
-            !Number.isFinite(
-              timestamp
-            )
-          ) {
-            return;
-          }
-
-          let bucketIndex =
-            Math.floor(
-              (timestamp -
-                startTime) /
-                bucketSizeMs
-            );
-
-          if (
-            bucketIndex < 0
-          ) {
-            return;
-          }
-
-          if (
-            bucketIndex >=
-            bucketCount
-          ) {
-            bucketIndex =
-              bucketCount - 1;
-          }
-
-          switch (log.level) {
-            case "info":
-              buckets[
-                bucketIndex
-              ].info++;
-              break;
-
-            case "warn":
-              buckets[
-                bucketIndex
-              ].warn++;
-              break;
-
-            case "error":
-              buckets[
-                bucketIndex
-              ].error++;
-              break;
-
-            case "fatal":
-              buckets[
-                bucketIndex
-              ].fatal++;
-              break;
-          }
-        }
-      );
-
-      return buckets.map(
-        ({
-          label,
-          info,
-          warn,
-          error,
-          fatal,
-        }) => ({
-          label,
-          info,
-          warn,
-          error,
-          fatal,
+  const chartData =
+    useMemo(() => {
+      return timeSeries.map(
+        (item) => ({
+          label: item.label,
+          info: item.info,
+          warn: item.warn,
+          error: item.error,
+          fatal: item.fatal,
         })
       );
-    }, [
-      timeFilteredLogs,
-      timeRange,
-    ]);
+    }, [timeSeries]);
 
   // ==========================================================
   // PIE CHART
@@ -709,7 +540,7 @@ export default function Dashboard() {
   // ==========================================================
 
   const getBadgeClass = (
-    level: LogEvent["level"]
+    level: LogLevel
   ) => {
     switch (level) {
       case "error":
@@ -721,25 +552,29 @@ export default function Dashboard() {
       case "warn":
         return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
 
+      case "info":
       default:
         return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
     }
   };
 
   // ==========================================================
-  // FILTER ACTIONS
+  // CLEAR FILTERS
   // ==========================================================
 
   const clearFilters = () => {
     setSearchTerm("");
     setSelectedLevel("all");
     setSelectedProject("all");
+    setTimeRange("7d");
+    setPage(1);
   };
 
   const filtersActive =
     searchTerm.trim() !== "" ||
     selectedLevel !== "all" ||
-    selectedProject !== "all";
+    selectedProject !== "all" ||
+    timeRange !== "7d";
 
   // ==========================================================
   // UI
@@ -819,30 +654,28 @@ export default function Dashboard() {
 
             <select
               value={selectedProject}
-              onChange={(event) =>
+              onChange={(event) => {
                 setSelectedProject(
                   event.target.value
-                )
-              }
+                );
+                setPage(1);
+              }}
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
             >
               <option value="all">
                 All Projects
               </option>
 
-              {projects
-                .filter(
-                  (project) =>
-                    project !== "all"
-                )
-                .map((project) => (
+              {projects.map(
+                (project) => (
                   <option
                     key={project}
                     value={project}
                   >
                     {project}
                   </option>
-                ))}
+                )
+              )}
             </select>
           </div>
 
@@ -855,11 +688,14 @@ export default function Dashboard() {
 
             <select
               value={selectedLevel}
-              onChange={(event) =>
+              onChange={(event) => {
                 setSelectedLevel(
-                  event.target.value
-                )
-              }
+                  event.target.value as
+                    | LogLevel
+                    | "all"
+                );
+                setPage(1);
+              }}
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
             >
               <option value="all">
@@ -895,7 +731,8 @@ export default function Dashboard() {
               value={timeRange}
               onChange={(event) =>
                 setTimeRange(
-                  event.target.value as TimeRange
+                  event.target.value as
+                    TimeRange
                 )
               }
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
@@ -916,6 +753,10 @@ export default function Dashboard() {
                 Last 7 Days
               </option>
 
+              <option value="30d">
+                Last 30 Days
+              </option>
+
               <option value="all">
                 All Time
               </option>
@@ -924,32 +765,38 @@ export default function Dashboard() {
 
         </div>
 
+        {/* FILTER INFO */}
+
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-4">
 
           <div className="text-sm text-gray-500">
             Showing{" "}
             <span className="text-white font-semibold">
-              {timeFilteredLogs.length}
-            </span>{" "}
-            of{" "}
-            <span className="text-white font-semibold">
               {logs.length}
             </span>{" "}
-            logs
+            logs on this page out of{" "}
+            <span className="text-white font-semibold">
+              {totalLogs}
+            </span>{" "}
+            matching logs
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex items-center gap-4">
 
             {filtersActive && (
-              <span className="text-sm text-emerald-400 flex items-center">
+              <span className="text-sm text-emerald-400">
                 Filters active
               </span>
             )}
 
             <button
-              onClick={clearFilters}
-              disabled={!filtersActive}
-              className={`px-4 py-2 rounded-lg transition ${
+              onClick={
+                clearFilters
+              }
+              disabled={
+                !filtersActive
+              }
+              className={`px-4 py-2 rounded-lg font-semibold transition ${
                 filtersActive
                   ? "bg-zinc-800 hover:bg-zinc-700 text-white"
                   : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
@@ -970,47 +817,73 @@ export default function Dashboard() {
 
         <StatCard
           title="Total Logs"
-          value={stats.total}
+          value={
+            loadingStats
+              ? "..."
+              : stats.total
+          }
           valueClass="text-white"
         />
 
         <StatCard
           title="Info"
-          value={stats.info}
+          value={
+            loadingStats
+              ? "..."
+              : stats.info
+          }
           valueClass="text-emerald-400"
         />
 
         <StatCard
           title="Warnings"
-          value={stats.warn}
+          value={
+            loadingStats
+              ? "..."
+              : stats.warn
+          }
           valueClass="text-yellow-400"
         />
 
         <StatCard
           title="Errors"
-          value={stats.error}
+          value={
+            loadingStats
+              ? "..."
+              : stats.error
+          }
           valueClass="text-red-400"
         />
 
         <StatCard
           title="Fatal"
-          value={stats.fatal}
+          value={
+            loadingStats
+              ? "..."
+              : stats.fatal
+          }
           valueClass="text-red-300"
         />
 
       </div>
 
-      {/* ======================================================
-          LOGS OVER TIME
-      ====================================================== */}
+      {/* LOGS OVER TIME */}
 
-      <LogsOverTimeChart
-        data={timeSeriesData}
-      />
+      <div className="mb-8">
 
-      {/* ======================================================
-          SECONDARY ANALYTICS
-      ====================================================== */}
+        {loadingTimeSeries ? (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 h-[440px] flex items-center justify-center text-gray-500">
+            Loading time-series data...
+          </div>
+        ) : (
+          <LogsOverTimeChart
+            data={chartData}
+          />
+        )}
+
+      </div>
+
+      {/* SECONDARY ANALYTICS */}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
 
@@ -1036,13 +909,17 @@ export default function Dashboard() {
               }}
             >
               <div className="w-28 h-28 rounded-full bg-zinc-900 flex flex-col items-center justify-center">
+
                 <span className="text-2xl font-bold">
-                  {pieTotal}
+                  {loadingStats
+                    ? "..."
+                    : pieTotal}
                 </span>
 
                 <span className="text-xs text-gray-500">
                   Total
                 </span>
+
               </div>
             </div>
 
@@ -1093,21 +970,26 @@ export default function Dashboard() {
           <div className="flex-1 flex flex-col items-center justify-center">
 
             <div className="text-7xl font-bold text-red-400">
-              {stats.errorRate.toFixed(
-                1
-              )}
-              %
+
+              {loadingStats
+                ? "..."
+                : `${stats.errorRate.toFixed(
+                    1
+                  )}%`}
+
             </div>
 
             <p className="text-gray-400 mt-4">
               serious logs
             </p>
 
-            <p className="text-sm text-gray-600 mt-2">
-              {stats.error +
-                stats.fatal}{" "}
-              out of {stats.total}
-            </p>
+            {!loadingStats && (
+              <p className="text-sm text-gray-600 mt-2">
+                {stats.error +
+                  stats.fatal}{" "}
+                out of {stats.total}
+              </p>
+            )}
 
           </div>
 
@@ -1122,7 +1004,7 @@ export default function Dashboard() {
           </h2>
 
           <p className="text-gray-400 mt-1 mb-5">
-            Most active projects
+            Most active projects on this page
           </p>
 
           {projectActivity.length ===
@@ -1219,11 +1101,11 @@ export default function Dashboard() {
 
           <div>
             <p className="text-xs text-gray-500 uppercase tracking-wide">
-              Records Loaded
+              Current Page
             </p>
 
             <p className="text-sm text-gray-300 mt-1">
-              {logs.length}
+              {logs.length} records
             </p>
           </div>
 
@@ -1257,42 +1139,25 @@ export default function Dashboard() {
 
         <div className="max-h-[650px] overflow-y-auto">
 
-          {loading ? (
+          {loadingLogs ? (
 
             <div className="p-10 text-center text-gray-500">
               Loading logs...
             </div>
 
-          ) : timeFilteredLogs.length ===
-            0 ? (
+          ) : logs.length === 0 ? (
 
-            <div className="p-10 text-center">
-
-              <p className="text-gray-400">
-                No logs found for the selected filters and time range.
-              </p>
-
-              <button
-                onClick={() => {
-                  clearFilters();
-                  setTimeRange("24h");
-                }}
-                className="mt-4 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg"
-              >
-                Reset Filters
-              </button>
-
+            <div className="p-10 text-center text-gray-500">
+              No logs found.
             </div>
 
           ) : (
 
-            timeFilteredLogs.map(
+            logs.map(
               (log, index) => {
-
                 const logId =
-                  log.id ||
                   log._id ||
-                  `${log.timestamp}-${index}`;
+                  `${log.timestamp}-${log.projectId}-${index}`;
 
                 return (
                   <div
@@ -1375,6 +1240,72 @@ export default function Dashboard() {
 
       </div>
 
+      {/* PAGINATION */}
+
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-6">
+
+        <div className="text-sm text-gray-500">
+          Page{" "}
+          <span className="text-white font-semibold">
+            {page}
+          </span>{" "}
+          of{" "}
+          <span className="text-white font-semibold">
+            {totalPages}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3">
+
+          <button
+            onClick={() =>
+              setPage(
+                (current) =>
+                  Math.max(
+                    current - 1,
+                    1
+                  )
+              )
+            }
+            disabled={
+              !hasPreviousPage ||
+              loadingLogs
+            }
+            className={`px-4 py-2 rounded-lg font-semibold ${
+              hasPreviousPage &&
+              !loadingLogs
+                ? "bg-zinc-800 hover:bg-zinc-700 text-white"
+                : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
+            }`}
+          >
+            ← Previous
+          </button>
+
+          <button
+            onClick={() =>
+              setPage(
+                (current) =>
+                  current + 1
+              )
+            }
+            disabled={
+              !hasNextPage ||
+              loadingLogs
+            }
+            className={`px-4 py-2 rounded-lg font-semibold ${
+              hasNextPage &&
+              !loadingLogs
+                ? "bg-zinc-800 hover:bg-zinc-700 text-white"
+                : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
+            }`}
+          >
+            Next →
+          </button>
+
+        </div>
+
+      </div>
+
       {/* FOOTER */}
 
       <div className="text-center text-gray-600 text-sm py-8">
@@ -1391,7 +1322,7 @@ export default function Dashboard() {
 
 interface StatCardProps {
   title: string;
-  value: number;
+  value: number | string;
   valueClass: string;
 }
 
@@ -1440,50 +1371,5 @@ function LegendItem({
         {label} ({value})
       </span>
     </div>
-  );
-}
-
-// ============================================================
-// TIME BUCKET LABEL
-// ============================================================
-
-function formatBucketLabel(
-  timestamp: number,
-  timeRange: TimeRange,
-  bucketCount: number
-): string {
-  const date = new Date(
-    timestamp
-  );
-
-  if (timeRange === "7d") {
-    return date.toLocaleDateString(
-      [],
-      {
-        month: "short",
-        day: "numeric",
-      }
-    );
-  }
-
-  if (
-    timeRange === "all" &&
-    bucketCount <= 14
-  ) {
-    return date.toLocaleDateString(
-      [],
-      {
-        month: "short",
-        day: "numeric",
-      }
-    );
-  }
-
-  return date.toLocaleTimeString(
-    [],
-    {
-      hour: "2-digit",
-      minute: "2-digit",
-    }
   );
 }
