@@ -5,6 +5,10 @@ import {
 } from "react";
 import { io, Socket } from "socket.io-client";
 
+import LogsOverTimeChart, {
+  type TimeSeriesPoint,
+} from "../components/charts/LogsOverTimeChart";
+
 interface LogEvent {
   id?: string;
   _id?: string;
@@ -15,10 +19,7 @@ interface LogEvent {
     | "error"
     | "fatal";
   message: string;
-  metadata?: Record<
-    string,
-    unknown
-  >;
+  metadata?: Record<string, unknown>;
   timestamp: string;
   createdAt?: string;
 }
@@ -29,6 +30,13 @@ interface LogsResponse {
   logs: LogEvent[];
 }
 
+type TimeRange =
+  | "1h"
+  | "6h"
+  | "24h"
+  | "7d"
+  | "all";
+
 const API_URL =
   import.meta.env.VITE_API_URL ||
   "https://logpulse-api-1tla.onrender.com";
@@ -38,9 +46,9 @@ const socket: Socket = io(API_URL, {
 });
 
 export default function Dashboard() {
-  const [logs, setLogs] = useState<
-    LogEvent[]
-  >([]);
+  const [logs, setLogs] = useState<LogEvent[]>(
+    []
+  );
 
   const [connected, setConnected] =
     useState(false);
@@ -62,8 +70,11 @@ export default function Dashboard() {
     setSelectedProject,
   ] = useState("all");
 
+  const [timeRange, setTimeRange] =
+  useState<TimeRange>("7d");
+
   // ==========================================================
-  // FETCH EXISTING LOGS
+  // FETCH LOGS
   // ==========================================================
 
   useEffect(() => {
@@ -91,7 +102,11 @@ export default function Dashboard() {
           );
         }
 
-        setLogs(data.logs);
+        setLogs(
+          Array.isArray(data.logs)
+            ? data.logs
+            : []
+        );
       } catch (err) {
         console.error(
           "Fetch Logs Error:",
@@ -156,16 +171,14 @@ export default function Dashboard() {
           return previousLogs;
         }
 
-        const normalizedLog: LogEvent = {
-          ...newLog,
-          id:
-            newLog.id ||
-            newLog._id ||
-            newId,
-        };
-
         return [
-          normalizedLog,
+          {
+            ...newLog,
+            id:
+              newLog.id ||
+              newLog._id ||
+              newId,
+          },
           ...previousLogs,
         ].slice(0, 100);
       });
@@ -213,23 +226,23 @@ export default function Dashboard() {
   // ==========================================================
 
   const projects = useMemo(() => {
+    const values = logs
+      .map(
+        (log) =>
+          log.projectId
+      )
+      .filter(Boolean);
+
     return [
       "all",
       ...Array.from(
-        new Set(
-          logs
-            .map(
-              (log) =>
-                log.projectId
-            )
-            .filter(Boolean)
-        )
+        new Set(values)
       ).sort(),
     ];
   }, [logs]);
 
   // ==========================================================
-  // FILTERED LOGS
+  // FILTER LOGS
   // ==========================================================
 
   const filteredLogs = useMemo(() => {
@@ -253,8 +266,7 @@ export default function Dashboard() {
 
       const matchesLevel =
         selectedLevel === "all" ||
-        log.level ===
-          selectedLevel;
+        log.level === selectedLevel;
 
       const matchesProject =
         selectedProject === "all" ||
@@ -275,33 +287,86 @@ export default function Dashboard() {
   ]);
 
   // ==========================================================
+  // TIME RANGE
+  // ==========================================================
+
+  const timeRangeMs = useMemo(() => {
+    switch (timeRange) {
+      case "1h":
+        return 60 * 60 * 1000;
+
+      case "6h":
+        return 6 * 60 * 60 * 1000;
+
+      case "24h":
+        return 24 * 60 * 60 * 1000;
+
+      case "7d":
+        return 7 * 24 * 60 * 60 * 1000;
+
+      case "all":
+      default:
+        return 0;
+    }
+  }, [timeRange]);
+
+  // ==========================================================
+  // TIME-FILTERED LOGS
+  // ==========================================================
+
+  const timeFilteredLogs = useMemo(() => {
+    if (timeRangeMs === 0) {
+      return filteredLogs;
+    }
+
+    const cutoff =
+      Date.now() - timeRangeMs;
+
+    return filteredLogs.filter(
+      (log) => {
+        const timestamp = new Date(
+          log.timestamp
+        ).getTime();
+
+        return (
+          !Number.isNaN(timestamp) &&
+          timestamp >= cutoff
+        );
+      }
+    );
+  }, [
+    filteredLogs,
+    timeRangeMs,
+  ]);
+
+  // ==========================================================
   // STATISTICS
   // ==========================================================
 
   const stats = useMemo(() => {
     const total =
-      filteredLogs.length;
+      timeFilteredLogs.length;
 
     const info =
-      filteredLogs.filter(
+      timeFilteredLogs.filter(
         (log) =>
           log.level === "info"
       ).length;
 
     const warn =
-      filteredLogs.filter(
+      timeFilteredLogs.filter(
         (log) =>
           log.level === "warn"
       ).length;
 
     const error =
-      filteredLogs.filter(
+      timeFilteredLogs.filter(
         (log) =>
           log.level === "error"
       ).length;
 
     const fatal =
-      filteredLogs.filter(
+      timeFilteredLogs.filter(
         (log) =>
           log.level === "fatal"
       ).length;
@@ -322,7 +387,7 @@ export default function Dashboard() {
       fatal,
       errorRate,
     };
-  }, [filteredLogs]);
+  }, [timeFilteredLogs]);
 
   // ==========================================================
   // PROJECT ACTIVITY
@@ -334,7 +399,7 @@ export default function Dashboard() {
       number
     > = {};
 
-    filteredLogs.forEach((log) => {
+    timeFilteredLogs.forEach((log) => {
       counts[log.projectId] =
         (counts[log.projectId] || 0) +
         1;
@@ -352,7 +417,7 @@ export default function Dashboard() {
           b.count - a.count
       )
       .slice(0, 8);
-  }, [filteredLogs]);
+  }, [timeFilteredLogs]);
 
   const maxProjectCount =
     projectActivity.length > 0
@@ -365,44 +430,227 @@ export default function Dashboard() {
       : 1;
 
   // ==========================================================
-  // BADGE COLORS
+  // TIME-SERIES DATA
   // ==========================================================
 
-  const getBadgeClass = (
-    level: LogEvent["level"]
-  ) => {
-    switch (level) {
-      case "error":
-        return "bg-red-500/10 text-red-400 border-red-500/30";
+  const timeSeriesData =
+    useMemo<TimeSeriesPoint[]>(() => {
+      if (
+        timeFilteredLogs.length ===
+        0
+      ) {
+        return [];
+      }
 
-      case "fatal":
-        return "bg-red-700/20 text-red-300 border-red-700/40";
+      const now = new Date();
 
-      case "warn":
-        return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
+      let bucketCount = 24;
 
-      default:
-        return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
-    }
-  };
+      let bucketSizeMs =
+        60 * 60 * 1000;
+
+      if (timeRange === "1h") {
+        bucketCount = 12;
+        bucketSizeMs =
+          5 * 60 * 1000;
+      }
+
+      if (timeRange === "6h") {
+        bucketCount = 12;
+        bucketSizeMs =
+          30 * 60 * 1000;
+      }
+
+      if (timeRange === "24h") {
+        bucketCount = 24;
+        bucketSizeMs =
+          60 * 60 * 1000;
+      }
+
+      if (timeRange === "7d") {
+        bucketCount = 14;
+        bucketSizeMs =
+          12 * 60 * 60 * 1000;
+      }
+
+      if (timeRange === "all") {
+        const timestamps =
+          timeFilteredLogs
+            .map((log) =>
+              new Date(
+                log.timestamp
+              ).getTime()
+            )
+            .filter((value) =>
+              Number.isFinite(value)
+            );
+
+        if (
+          timestamps.length ===
+          0
+        ) {
+          return [];
+        }
+
+        const oldest =
+          Math.min(...timestamps);
+
+        const newest =
+          Math.max(...timestamps);
+
+        const duration =
+          newest - oldest;
+
+        if (
+          duration <=
+          24 * 60 * 60 * 1000
+        ) {
+          bucketCount = 24;
+          bucketSizeMs =
+            60 * 60 * 1000;
+        } else {
+          bucketCount = 14;
+          bucketSizeMs = Math.max(
+            Math.ceil(
+              duration /
+                bucketCount
+            ),
+            60 * 60 * 1000
+          );
+        }
+      }
+
+      const startTime =
+        timeRange === "all"
+          ? new Date(
+              Math.min(
+                ...timeFilteredLogs.map(
+                  (log) =>
+                    new Date(
+                      log.timestamp
+                    ).getTime()
+                )
+              )
+            ).getTime()
+          : now.getTime() -
+            bucketCount *
+              bucketSizeMs;
+
+      const buckets =
+        Array.from(
+          {
+            length:
+              bucketCount,
+          },
+          (_, index) => {
+            const bucketStart =
+              startTime +
+              index *
+                bucketSizeMs;
+
+            return {
+              timestamp:
+                bucketStart,
+              label:
+                formatBucketLabel(
+                  bucketStart,
+                  timeRange,
+                  bucketCount
+                ),
+              info: 0,
+              warn: 0,
+              error: 0,
+              fatal: 0,
+            };
+          }
+        );
+
+      timeFilteredLogs.forEach(
+        (log) => {
+          const timestamp =
+            new Date(
+              log.timestamp
+            ).getTime();
+
+          if (
+            !Number.isFinite(
+              timestamp
+            )
+          ) {
+            return;
+          }
+
+          let bucketIndex =
+            Math.floor(
+              (timestamp -
+                startTime) /
+                bucketSizeMs
+            );
+
+          if (
+            bucketIndex < 0
+          ) {
+            return;
+          }
+
+          if (
+            bucketIndex >=
+            bucketCount
+          ) {
+            bucketIndex =
+              bucketCount - 1;
+          }
+
+          switch (log.level) {
+            case "info":
+              buckets[
+                bucketIndex
+              ].info++;
+              break;
+
+            case "warn":
+              buckets[
+                bucketIndex
+              ].warn++;
+              break;
+
+            case "error":
+              buckets[
+                bucketIndex
+              ].error++;
+              break;
+
+            case "fatal":
+              buckets[
+                bucketIndex
+              ].fatal++;
+              break;
+          }
+        }
+      );
+
+      return buckets.map(
+        ({
+          label,
+          info,
+          warn,
+          error,
+          fatal,
+        }) => ({
+          label,
+          info,
+          warn,
+          error,
+          fatal,
+        })
+      );
+    }, [
+      timeFilteredLogs,
+      timeRange,
+    ]);
 
   // ==========================================================
-  // CLEAR FILTERS
-  // ==========================================================
-
-  const clearFilters = () => {
-    setSearchTerm("");
-    setSelectedLevel("all");
-    setSelectedProject("all");
-  };
-
-  const filtersActive =
-    searchTerm.trim() !== "" ||
-    selectedLevel !== "all" ||
-    selectedProject !== "all";
-
-  // ==========================================================
-  // PIE CHART CALCULATIONS
+  // PIE CHART
   // ==========================================================
 
   const pieTotal =
@@ -457,6 +705,43 @@ export default function Dashboard() {
         )`;
 
   // ==========================================================
+  // BADGE
+  // ==========================================================
+
+  const getBadgeClass = (
+    level: LogEvent["level"]
+  ) => {
+    switch (level) {
+      case "error":
+        return "bg-red-500/10 text-red-400 border-red-500/30";
+
+      case "fatal":
+        return "bg-red-700/20 text-red-300 border-red-700/40";
+
+      case "warn":
+        return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
+
+      default:
+        return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
+    }
+  };
+
+  // ==========================================================
+  // FILTER ACTIONS
+  // ==========================================================
+
+  const clearFilters = () => {
+    setSearchTerm("");
+    setSelectedLevel("all");
+    setSelectedProject("all");
+  };
+
+  const filtersActive =
+    searchTerm.trim() !== "" ||
+    selectedLevel !== "all" ||
+    selectedProject !== "all";
+
+  // ==========================================================
   // UI
   // ==========================================================
 
@@ -505,6 +790,8 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
 
+          {/* SEARCH */}
+
           <div>
             <label className="block text-sm text-gray-400 mb-2">
               Search Logs
@@ -522,6 +809,8 @@ export default function Dashboard() {
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none focus:border-emerald-500"
             />
           </div>
+
+          {/* PROJECT */}
 
           <div>
             <label className="block text-sm text-gray-400 mb-2">
@@ -556,6 +845,8 @@ export default function Dashboard() {
                 ))}
             </select>
           </div>
+
+          {/* LEVEL */}
 
           <div>
             <label className="block text-sm text-gray-400 mb-2">
@@ -593,103 +884,133 @@ export default function Dashboard() {
             </select>
           </div>
 
-          <div className="flex items-end">
-            <button
-              onClick={clearFilters}
-              disabled={!filtersActive}
-              className={`w-full px-4 py-3 rounded-lg font-semibold transition ${
-                filtersActive
-                  ? "bg-zinc-800 hover:bg-zinc-700 text-white"
-                  : "bg-zinc-950 text-zinc-600 cursor-not-allowed border border-zinc-800"
-              }`}
+          {/* TIME RANGE */}
+
+          <div>
+            <label className="block text-sm text-gray-400 mb-2">
+              Time Range
+            </label>
+
+            <select
+              value={timeRange}
+              onChange={(event) =>
+                setTimeRange(
+                  event.target.value as TimeRange
+                )
+              }
+              className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
             >
-              Clear Filters
-            </button>
+              <option value="1h">
+                Last 1 Hour
+              </option>
+
+              <option value="6h">
+                Last 6 Hours
+              </option>
+
+              <option value="24h">
+                Last 24 Hours
+              </option>
+
+              <option value="7d">
+                Last 7 Days
+              </option>
+
+              <option value="all">
+                All Time
+              </option>
+            </select>
           </div>
 
         </div>
 
-        <div className="flex flex-col md:flex-row md:justify-between gap-2 mt-4 text-sm text-gray-500">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-4">
 
-          <span>
+          <div className="text-sm text-gray-500">
             Showing{" "}
             <span className="text-white font-semibold">
-              {filteredLogs.length}
+              {timeFilteredLogs.length}
             </span>{" "}
             of{" "}
             <span className="text-white font-semibold">
               {logs.length}
             </span>{" "}
             logs
-          </span>
+          </div>
 
-          {filtersActive && (
-            <span className="text-emerald-400">
-              Filters active
-            </span>
-          )}
+          <div className="flex gap-3">
+
+            {filtersActive && (
+              <span className="text-sm text-emerald-400 flex items-center">
+                Filters active
+              </span>
+            )}
+
+            <button
+              onClick={clearFilters}
+              disabled={!filtersActive}
+              className={`px-4 py-2 rounded-lg transition ${
+                filtersActive
+                  ? "bg-zinc-800 hover:bg-zinc-700 text-white"
+                  : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
+              }`}
+            >
+              Clear Filters
+            </button>
+
+          </div>
 
         </div>
 
       </div>
 
-      {/* STAT CARDS */}
+      {/* STATISTICS */}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          <p className="text-gray-400 text-sm">
-            Total Logs
-          </p>
+        <StatCard
+          title="Total Logs"
+          value={stats.total}
+          valueClass="text-white"
+        />
 
-          <h2 className="text-3xl font-bold mt-2">
-            {stats.total}
-          </h2>
-        </div>
+        <StatCard
+          title="Info"
+          value={stats.info}
+          valueClass="text-emerald-400"
+        />
 
-        <div className="bg-zinc-900 border border-emerald-900/40 rounded-xl p-5">
-          <p className="text-gray-400 text-sm">
-            Info
-          </p>
+        <StatCard
+          title="Warnings"
+          value={stats.warn}
+          valueClass="text-yellow-400"
+        />
 
-          <h2 className="text-3xl font-bold text-emerald-400 mt-2">
-            {stats.info}
-          </h2>
-        </div>
+        <StatCard
+          title="Errors"
+          value={stats.error}
+          valueClass="text-red-400"
+        />
 
-        <div className="bg-zinc-900 border border-yellow-900/40 rounded-xl p-5">
-          <p className="text-gray-400 text-sm">
-            Warnings
-          </p>
-
-          <h2 className="text-3xl font-bold text-yellow-400 mt-2">
-            {stats.warn}
-          </h2>
-        </div>
-
-        <div className="bg-zinc-900 border border-red-900/40 rounded-xl p-5">
-          <p className="text-gray-400 text-sm">
-            Errors
-          </p>
-
-          <h2 className="text-3xl font-bold text-red-400 mt-2">
-            {stats.error}
-          </h2>
-        </div>
-
-        <div className="bg-zinc-900 border border-red-900/40 rounded-xl p-5">
-          <p className="text-gray-400 text-sm">
-            Fatal
-          </p>
-
-          <h2 className="text-3xl font-bold text-red-300 mt-2">
-            {stats.fatal}
-          </h2>
-        </div>
+        <StatCard
+          title="Fatal"
+          value={stats.fatal}
+          valueClass="text-red-300"
+        />
 
       </div>
 
-      {/* ANALYTICS */}
+      {/* ======================================================
+          LOGS OVER TIME
+      ====================================================== */}
+
+      <LogsOverTimeChart
+        data={timeSeriesData}
+      />
+
+      {/* ======================================================
+          SECONDARY ANALYTICS
+      ====================================================== */}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
 
@@ -708,14 +1029,14 @@ export default function Dashboard() {
           <div className="flex flex-col items-center justify-center mt-5">
 
             <div
-              className="w-56 h-56 rounded-full flex items-center justify-center"
+              className="w-52 h-52 rounded-full flex items-center justify-center"
               style={{
                 background:
                   pieGradient,
               }}
             >
-              <div className="w-32 h-32 rounded-full bg-zinc-900 flex flex-col items-center justify-center">
-                <span className="text-3xl font-bold">
+              <div className="w-28 h-28 rounded-full bg-zinc-900 flex flex-col items-center justify-center">
+                <span className="text-2xl font-bold">
                   {pieTotal}
                 </span>
 
@@ -725,39 +1046,31 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-x-8 gap-y-3 mt-6">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 mt-6 text-sm">
 
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-emerald-400" />
+              <LegendItem
+                label="Info"
+                value={stats.info}
+                dotClass="bg-emerald-400"
+              />
 
-                <span className="text-sm">
-                  Info ({stats.info})
-                </span>
-              </div>
+              <LegendItem
+                label="Warning"
+                value={stats.warn}
+                dotClass="bg-yellow-400"
+              />
 
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-yellow-400" />
+              <LegendItem
+                label="Error"
+                value={stats.error}
+                dotClass="bg-red-400"
+              />
 
-                <span className="text-sm">
-                  Warning ({stats.warn})
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-400" />
-
-                <span className="text-sm">
-                  Error ({stats.error})
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-600" />
-
-                <span className="text-sm">
-                  Fatal ({stats.fatal})
-                </span>
-              </div>
+              <LegendItem
+                label="Fatal"
+                value={stats.fatal}
+                dotClass="bg-red-600"
+              />
 
             </div>
 
@@ -780,7 +1093,10 @@ export default function Dashboard() {
           <div className="flex-1 flex flex-col items-center justify-center">
 
             <div className="text-7xl font-bold text-red-400">
-              {stats.errorRate.toFixed(1)}%
+              {stats.errorRate.toFixed(
+                1
+              )}
+              %
             </div>
 
             <p className="text-gray-400 mt-4">
@@ -790,8 +1106,7 @@ export default function Dashboard() {
             <p className="text-sm text-gray-600 mt-2">
               {stats.error +
                 stats.fatal}{" "}
-              out of{" "}
-              {stats.total}
+              out of {stats.total}
             </p>
 
           </div>
@@ -840,7 +1155,7 @@ export default function Dashboard() {
                           {item.project}
                         </span>
 
-                        <span className="text-sm text-gray-500 shrink-0">
+                        <span className="text-sm text-gray-500">
                           {item.count}
                         </span>
 
@@ -879,7 +1194,7 @@ export default function Dashboard() {
               Backend
             </p>
 
-            <p className="text-sm text-gray-300 mt-1">
+            <p className="text-sm text-gray-300 mt-1 break-all">
               {API_URL}
             </p>
           </div>
@@ -948,31 +1263,30 @@ export default function Dashboard() {
               Loading logs...
             </div>
 
-          ) : filteredLogs.length ===
+          ) : timeFilteredLogs.length ===
             0 ? (
 
             <div className="p-10 text-center">
 
               <p className="text-gray-400">
-                No logs found.
+                No logs found for the selected filters and time range.
               </p>
 
-              {filtersActive && (
-                <button
-                  onClick={
-                    clearFilters
-                  }
-                  className="mt-4 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg"
-                >
-                  Clear Filters
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  clearFilters();
+                  setTimeRange("24h");
+                }}
+                className="mt-4 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg"
+              >
+                Reset Filters
+              </button>
 
             </div>
 
           ) : (
 
-            filteredLogs.map(
+            timeFilteredLogs.map(
               (log, index) => {
 
                 const logId =
@@ -1068,5 +1382,108 @@ export default function Dashboard() {
       </div>
 
     </div>
+  );
+}
+
+// ============================================================
+// STAT CARD
+// ============================================================
+
+interface StatCardProps {
+  title: string;
+  value: number;
+  valueClass: string;
+}
+
+function StatCard({
+  title,
+  value,
+  valueClass,
+}: StatCardProps) {
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+      <p className="text-gray-400 text-sm">
+        {title}
+      </p>
+
+      <h2
+        className={`text-3xl font-bold mt-2 ${valueClass}`}
+      >
+        {value}
+      </h2>
+    </div>
+  );
+}
+
+// ============================================================
+// LEGEND ITEM
+// ============================================================
+
+interface LegendItemProps {
+  label: string;
+  value: number;
+  dotClass: string;
+}
+
+function LegendItem({
+  label,
+  value,
+  dotClass,
+}: LegendItemProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className={`w-3 h-3 rounded-full ${dotClass}`}
+      />
+
+      <span>
+        {label} ({value})
+      </span>
+    </div>
+  );
+}
+
+// ============================================================
+// TIME BUCKET LABEL
+// ============================================================
+
+function formatBucketLabel(
+  timestamp: number,
+  timeRange: TimeRange,
+  bucketCount: number
+): string {
+  const date = new Date(
+    timestamp
+  );
+
+  if (timeRange === "7d") {
+    return date.toLocaleDateString(
+      [],
+      {
+        month: "short",
+        day: "numeric",
+      }
+    );
+  }
+
+  if (
+    timeRange === "all" &&
+    bucketCount <= 14
+  ) {
+    return date.toLocaleDateString(
+      [],
+      {
+        month: "short",
+        day: "numeric",
+      }
+    );
+  }
+
+  return date.toLocaleTimeString(
+    [],
+    {
+      hour: "2-digit",
+      minute: "2-digit",
+    }
   );
 }

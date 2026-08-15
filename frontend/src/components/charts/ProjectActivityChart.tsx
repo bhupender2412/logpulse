@@ -73,6 +73,7 @@ export default function ProjectActivityChart({
             dataKey="count"
             fill="#818cf8"
           />
+          
         </BarChart>
       </ResponsiveContainer>
     </div>
