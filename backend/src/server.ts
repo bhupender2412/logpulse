@@ -74,7 +74,7 @@ type TimeRange =
   | "all";
 
 // ==========================================================
-// HELPERS
+// RANGE HELPERS
 // ==========================================================
 
 function getRangeStart(
@@ -183,8 +183,6 @@ function buildLogMatch(
     unknown
   > = {};
 
-  // PROJECT FILTER
-
   if (
     typeof query.projectId ===
       "string" &&
@@ -194,8 +192,6 @@ function buildLogMatch(
       query.projectId.trim();
   }
 
-  // LEVEL FILTER
-
   const level = getLevelFilter(
     query.level
   );
@@ -203,8 +199,6 @@ function buildLogMatch(
   if (level) {
     filter.level = level;
   }
-
-  // SEARCH FILTER
 
   if (
     typeof query.search ===
@@ -257,6 +251,170 @@ function buildTimeMatch(
 }
 
 // ==========================================================
+// TIME-SERIES CONFIG
+// ==========================================================
+
+interface TimeSeriesConfig {
+  unit:
+    | "minute"
+    | "hour"
+    | "day";
+
+  binSize: number;
+
+  bucketMs: number;
+}
+
+function getTimeSeriesConfig(
+  range: TimeRange
+): TimeSeriesConfig {
+  switch (range) {
+    case "1h":
+      return {
+        unit: "minute",
+        binSize: 5,
+        bucketMs:
+          5 * 60 * 1000,
+      };
+
+    case "6h":
+      return {
+        unit: "minute",
+        binSize: 30,
+        bucketMs:
+          30 * 60 * 1000,
+      };
+
+    case "24h":
+      return {
+        unit: "hour",
+        binSize: 1,
+        bucketMs:
+          60 * 60 * 1000,
+      };
+
+    case "7d":
+      return {
+        unit: "day",
+        binSize: 1,
+        bucketMs:
+          24 * 60 * 60 * 1000,
+      };
+
+    case "30d":
+      return {
+        unit: "day",
+        binSize: 1,
+        bucketMs:
+          24 * 60 * 60 * 1000,
+      };
+
+    case "all":
+    default:
+      return {
+        unit: "day",
+        binSize: 1,
+        bucketMs:
+          24 * 60 * 60 * 1000,
+      };
+  }
+}
+
+// ==========================================================
+// ALIGN TIMESTAMP TO BUCKET
+// ==========================================================
+
+function alignToBucket(
+  timestamp: number,
+  config: TimeSeriesConfig
+): number {
+  const date =
+    new Date(timestamp);
+
+  if (config.unit === "day") {
+    return Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate()
+    );
+  }
+
+  if (config.unit === "hour") {
+    return Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      date.getUTCHours()
+    );
+  }
+
+  // minute
+  const minutes =
+    date.getUTCMinutes();
+
+  const alignedMinutes =
+    Math.floor(
+      minutes / config.binSize
+    ) * config.binSize;
+
+  return Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    date.getUTCHours(),
+    alignedMinutes
+  );
+}
+
+// ==========================================================
+// FORMAT TIME-SERIES LABEL
+// ==========================================================
+
+function formatTimeSeriesLabel(
+  timestamp: number,
+  unit:
+    | "minute"
+    | "hour"
+    | "day"
+): string {
+  const date =
+    new Date(timestamp);
+
+  if (unit === "minute") {
+    return date.toLocaleTimeString(
+      "en-US",
+      {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
+      }
+    );
+  }
+
+  if (unit === "hour") {
+    return date.toLocaleString(
+      "en-US",
+      {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        timeZone: "UTC",
+      }
+    );
+  }
+
+  return date.toLocaleDateString(
+    "en-US",
+    {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    }
+  );
+}
+
+// ==========================================================
 // ROOT
 // ==========================================================
 
@@ -288,7 +446,9 @@ app.get(
       if (redisClient.isOpen) {
         try {
           await redisClient.ping();
-          redisStatus = "connected";
+
+          redisStatus =
+            "connected";
         } catch {
           redisStatus = "error";
         }
@@ -324,6 +484,7 @@ app.get(
           services: {
             mongodb:
               mongoStatus,
+
             redis:
               redisStatus,
           },
@@ -374,7 +535,8 @@ app.get(
             "unknown",
 
           collection:
-            LogModel.collection.name,
+            LogModel.collection
+              .name,
         },
 
         environment: {
@@ -462,10 +624,15 @@ app.get(
 
       return res.status(200).json({
         success: true,
+
         page,
+
         limit,
+
         total,
+
         totalPages,
+
         count: logs.length,
 
         hasNextPage:
@@ -610,12 +777,19 @@ app.get(
 
       return res.status(200).json({
         success: true,
+
         range,
+
         total,
+
         info: counts.info,
+
         warn: counts.warn,
+
         error: counts.error,
+
         fatal: counts.fatal,
+
         errorRate,
       });
     } catch (error) {
@@ -635,15 +809,6 @@ app.get(
 
 // ==========================================================
 // PROJECT ACTIVITY STATISTICS
-//
-// GET:
-// /api/v1/logs/projects/stats?range=7d
-//
-// Filters supported:
-// range
-// search
-// projectId
-// level
 // ==========================================================
 
 app.get(
@@ -714,6 +879,7 @@ app.get(
           (project) => ({
             projectId:
               project._id,
+
             count:
               project.count,
           })
@@ -746,7 +912,7 @@ app.get(
 );
 
 // ==========================================================
-// TIME SERIES
+// TIME SERIES - WITH ZERO VALUE BUCKETS
 // ==========================================================
 
 app.get(
@@ -777,47 +943,16 @@ app.get(
         ...timeFilter,
       };
 
-      let unit:
-        | "minute"
-        | "hour"
-        | "day";
+      const config =
+        getTimeSeriesConfig(
+          range
+        );
 
-      let binSize = 1;
+      // ------------------------------------------------------
+      // MongoDB aggregation
+      // ------------------------------------------------------
 
-      switch (range) {
-        case "1h":
-          unit = "minute";
-          binSize = 5;
-          break;
-
-        case "6h":
-          unit = "minute";
-          binSize = 30;
-          break;
-
-        case "24h":
-          unit = "hour";
-          binSize = 1;
-          break;
-
-        case "7d":
-          unit = "day";
-          binSize = 1;
-          break;
-
-        case "30d":
-          unit = "day";
-          binSize = 1;
-          break;
-
-        case "all":
-        default:
-          unit = "day";
-          binSize = 1;
-          break;
-      }
-
-      const data =
+      const aggregated =
         await LogModel.aggregate([
           {
             $match: match,
@@ -828,8 +963,13 @@ app.get(
               _id: {
                 $dateTrunc: {
                   date: "$timestamp",
-                  unit,
-                  binSize,
+
+                  unit:
+                    config.unit,
+
+                  binSize:
+                    config.binSize,
+
                   timezone: "UTC",
                 },
               },
@@ -907,77 +1047,174 @@ app.get(
           },
         ]);
 
-      const formattedData =
-        data.map((item) => {
-          const date =
-            new Date(item._id);
+      // ------------------------------------------------------
+      // Build map of actual buckets
+      // ------------------------------------------------------
 
-          let label: string;
-
-          if (
-            unit === "minute"
-          ) {
-            label =
-              date.toLocaleTimeString(
-                "en-US",
-                {
-                  hour: "2-digit",
-                  minute:
-                    "2-digit",
-                  hour12: false,
-                  timeZone:
-                    "UTC",
-                }
-              );
-          } else if (
-            unit === "hour"
-          ) {
-            label =
-              date.toLocaleString(
-                "en-US",
-                {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  timeZone:
-                    "UTC",
-                }
-              );
-          } else {
-            label =
-              date.toLocaleDateString(
-                "en-US",
-                {
-                  month: "short",
-                  day: "numeric",
-                  timeZone:
-                    "UTC",
-                }
-              );
+      const bucketMap =
+        new Map<
+          number,
+          {
+            info: number;
+            warn: number;
+            error: number;
+            fatal: number;
+            total: number;
           }
+        >();
 
-          return {
-            label,
+      aggregated.forEach(
+        (item) => {
+          const timestamp =
+            new Date(
+              item._id
+            ).getTime();
 
-            timestamp:
-              date.toISOString(),
+          bucketMap.set(
+            timestamp,
+            {
+              info:
+                item.info || 0,
 
-            info:
-              item.info || 0,
+              warn:
+                item.warn || 0,
 
-            warn:
-              item.warn || 0,
+              error:
+                item.error || 0,
 
-            error:
-              item.error || 0,
+              fatal:
+                item.fatal || 0,
 
-            fatal:
-              item.fatal || 0,
+              total:
+                item.total || 0,
+            }
+          );
+        }
+      );
 
-            total:
-              item.total || 0,
-          };
+      // ------------------------------------------------------
+      // Determine bucket range
+      // ------------------------------------------------------
+
+      let startBucket: number;
+
+      let endBucket: number;
+
+      if (range === "all") {
+        if (
+          aggregated.length ===
+          0
+        ) {
+          return res.status(200).json({
+            success: true,
+
+            range,
+
+            interval: {
+              unit:
+                config.unit,
+
+              binSize:
+                config.binSize,
+            },
+
+            count: 0,
+
+            data: [],
+          });
+        }
+
+        const timestamps =
+          aggregated.map(
+            (item) =>
+              new Date(
+                item._id
+              ).getTime()
+          );
+
+        startBucket =
+          Math.min(
+            ...timestamps
+          );
+
+        endBucket =
+          Math.max(
+            ...timestamps
+          );
+      } else {
+        const rangeStart =
+          getRangeStart(range);
+
+        if (!rangeStart) {
+          startBucket =
+            alignToBucket(
+              Date.now(),
+              config
+            );
+
+          endBucket =
+            startBucket;
+        } else {
+          startBucket =
+            alignToBucket(
+              rangeStart.getTime(),
+              config
+            );
+
+          endBucket =
+            alignToBucket(
+              Date.now(),
+              config
+            );
+        }
+      }
+
+      // ------------------------------------------------------
+      // Generate every bucket, including zeros
+      // ------------------------------------------------------
+
+      const formattedData = [];
+
+      for (
+        let current =
+          startBucket;
+        current <= endBucket;
+        current +=
+          config.bucketMs
+      ) {
+        const bucket =
+          bucketMap.get(
+            current
+          );
+
+        formattedData.push({
+          label:
+            formatTimeSeriesLabel(
+              current,
+              config.unit
+            ),
+
+          timestamp:
+            new Date(
+              current
+            ).toISOString(),
+
+          info:
+            bucket?.info || 0,
+
+          warn:
+            bucket?.warn || 0,
+
+          error:
+            bucket?.error || 0,
+
+          fatal:
+            bucket?.fatal || 0,
+
+          total:
+            bucket?.total || 0,
         });
+      }
 
       return res.status(200).json({
         success: true,
@@ -985,8 +1222,11 @@ app.get(
         range,
 
         interval: {
-          unit,
-          binSize,
+          unit:
+            config.unit,
+
+          binSize:
+            config.binSize,
         },
 
         count:
@@ -1012,9 +1252,6 @@ app.get(
 
 // ==========================================================
 // GET LOGS BY PROJECT
-// IMPORTANT:
-// This route comes AFTER /projects/stats,
-// otherwise "projects" could be interpreted as projectId.
 // ==========================================================
 
 app.get(
@@ -1223,7 +1460,9 @@ app.post(
     }
 
     try {
-      // SAVE MONGODB
+      // ------------------------------------------------------
+      // MongoDB
+      // ------------------------------------------------------
 
       const savedLog =
         await LogModel.create({
@@ -1239,7 +1478,9 @@ app.post(
         savedLog._id.toString()
       );
 
-      // REDIS
+      // ------------------------------------------------------
+      // Redis
+      // ------------------------------------------------------
 
       let entryId =
         `mongo-${savedLog._id}`;
@@ -1266,6 +1507,11 @@ app.post(
                     .toString(),
               }
             );
+
+          console.log(
+            "📡 Redis stream entry:",
+            entryId
+          );
         } catch (redisError) {
           console.error(
             "⚠️ Redis Stream Error:",
@@ -1274,7 +1520,9 @@ app.post(
         }
       }
 
-      // SOCKET
+      // ------------------------------------------------------
+      // Socket.IO
+      // ------------------------------------------------------
 
       io.emit("log:new", {
         id: savedLog._id
@@ -1292,6 +1540,10 @@ app.post(
 
         timestamp,
       });
+
+      console.log(
+        "📡 Socket.IO event emitted"
+      );
 
       return res.status(201).json({
         success: true,
@@ -1320,7 +1572,7 @@ app.post(
 );
 
 // ==========================================================
-// START
+// START SERVER
 // ==========================================================
 
 const PORT =
@@ -1341,6 +1593,8 @@ async function start() {
       "===================================="
     );
 
+    // MongoDB
+
     await connectDB();
 
     console.log(
@@ -1355,8 +1609,11 @@ async function start() {
 
     console.log(
       "📋 Collection:",
-      LogModel.collection.name
+      LogModel.collection
+        .name
     );
+
+    // Redis
 
     try {
       await connectRedis();
@@ -1374,6 +1631,8 @@ async function start() {
         "⚠️ Continuing without Redis..."
       );
     }
+
+    // HTTP
 
     server.listen(
       PORT,
@@ -1437,7 +1696,7 @@ async function start() {
 start();
 
 // ==========================================================
-// SHUTDOWN
+// GRACEFUL SHUTDOWN
 // ==========================================================
 
 async function shutdown() {
@@ -1450,6 +1709,7 @@ async function shutdown() {
       redisClient.isOpen
     ) {
       await redisClient.quit();
+
       console.log(
         "🔴 Redis connection closed"
       );
