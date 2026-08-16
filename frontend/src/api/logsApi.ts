@@ -36,7 +36,7 @@ export interface Log {
 }
 
 // ==========================================================
-// PAGINATED LOG RESPONSE
+// LOG RESPONSE
 // ==========================================================
 
 export interface LogsResponse {
@@ -59,7 +59,7 @@ export interface LogsResponse {
 }
 
 // ==========================================================
-// STATS RESPONSE
+// STATS
 // ==========================================================
 
 export interface LogStatsResponse {
@@ -76,7 +76,7 @@ export interface LogStatsResponse {
 }
 
 // ==========================================================
-// TIME-SERIES
+// TIME SERIES
 // ==========================================================
 
 export interface TimeSeriesPoint {
@@ -94,12 +94,33 @@ export interface LogTimeSeriesResponse {
   range: TimeRange;
 
   interval: {
-    unit: "minute" | "hour" | "day";
+    unit:
+      | "minute"
+      | "hour"
+      | "day";
     binSize: number;
   };
 
   count: number;
+
   data: TimeSeriesPoint[];
+}
+
+// ==========================================================
+// PROJECT STATS
+// ==========================================================
+
+export interface ProjectStatsPoint {
+  projectId: string;
+  count: number;
+}
+
+export interface ProjectStatsResponse {
+  success: boolean;
+  range: TimeRange;
+  count: number;
+  total: number;
+  data: ProjectStatsPoint[];
 }
 
 // ==========================================================
@@ -117,7 +138,8 @@ export interface GetLogsParams {
 export async function getLogs(
   params: GetLogsParams = {}
 ): Promise<LogsResponse> {
-  const query = new URLSearchParams();
+  const query =
+    new URLSearchParams();
 
   if (params.page !== undefined) {
     query.set(
@@ -135,7 +157,7 @@ export async function getLogs(
 
   if (
     params.search &&
-    params.search.trim() !== ""
+    params.search.trim()
   ) {
     query.set(
       "search",
@@ -163,7 +185,8 @@ export async function getLogs(
     );
   }
 
-  const queryString = query.toString();
+  const queryString =
+    query.toString();
 
   const url =
     queryString.length > 0
@@ -179,7 +202,7 @@ export async function getLogs(
     );
   }
 
-  const data: LogsResponse =
+  const data =
     await response.json();
 
   if (!data.success) {
@@ -192,7 +215,7 @@ export async function getLogs(
 }
 
 // ==========================================================
-// GET STATISTICS
+// GET STATS
 // ==========================================================
 
 export interface GetStatsParams {
@@ -215,7 +238,7 @@ export async function getLogStats(
 
   if (
     params.search &&
-    params.search.trim() !== ""
+    params.search.trim()
   ) {
     query.set(
       "search",
@@ -254,7 +277,7 @@ export async function getLogStats(
     );
   }
 
-  const data: LogStatsResponse =
+  const data =
     await response.json();
 
   if (!data.success) {
@@ -267,7 +290,7 @@ export async function getLogStats(
 }
 
 // ==========================================================
-// GET TIME-SERIES DATA
+// GET TIME SERIES
 // ==========================================================
 
 export interface GetTimeSeriesParams {
@@ -290,7 +313,7 @@ export async function getLogTimeSeries(
 
   if (
     params.search &&
-    params.search.trim() !== ""
+    params.search.trim()
   ) {
     query.set(
       "search",
@@ -329,12 +352,87 @@ export async function getLogTimeSeries(
     );
   }
 
-  const data: LogTimeSeriesResponse =
+  const data =
     await response.json();
 
   if (!data.success) {
     throw new Error(
       "Backend returned an error while fetching time-series data"
+    );
+  }
+
+  return data;
+}
+
+// ==========================================================
+// GET PROJECT STATS
+// ==========================================================
+
+export interface GetProjectStatsParams {
+  range?: TimeRange;
+  search?: string;
+  projectId?: string;
+  level?: string;
+}
+
+export async function getProjectStats(
+  params: GetProjectStatsParams = {}
+): Promise<ProjectStatsResponse> {
+  const query =
+    new URLSearchParams();
+
+  query.set(
+    "range",
+    params.range || "24h"
+  );
+
+  if (
+    params.search &&
+    params.search.trim()
+  ) {
+    query.set(
+      "search",
+      params.search.trim()
+    );
+  }
+
+  if (
+    params.projectId &&
+    params.projectId !== "all"
+  ) {
+    query.set(
+      "projectId",
+      params.projectId
+    );
+  }
+
+  if (
+    params.level &&
+    params.level !== "all"
+  ) {
+    query.set(
+      "level",
+      params.level
+    );
+  }
+
+  const response =
+    await fetch(
+      `${API_URL}/api/v1/logs/projects/stats?${query.toString()}`
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch project statistics: ${response.status}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  if (!data.success) {
+    throw new Error(
+      "Backend returned an error while fetching project statistics"
     );
   }
 
@@ -355,8 +453,7 @@ export async function getProjectLogs(
   params: GetProjectLogsParams
 ): Promise<LogsResponse> {
   if (
-    !params.projectId ||
-    params.projectId.trim() === ""
+    !params.projectId.trim()
   ) {
     throw new Error(
       "Project ID is required"
@@ -401,16 +498,7 @@ export async function getProjectLogs(
     );
   }
 
-  const data: LogsResponse =
-    await response.json();
-
-  if (!data.success) {
-    throw new Error(
-      "Backend returned an error while fetching project logs"
-    );
-  }
-
-  return data;
+  return response.json();
 }
 
 // ==========================================================
@@ -443,30 +531,8 @@ export async function sendLog(
     );
 
   if (!response.ok) {
-    let errorMessage =
-      "Failed to send log";
-
-    try {
-      const errorData =
-        await response.json();
-
-      if (
-        errorData?.error
-      ) {
-        errorMessage =
-          typeof errorData.error ===
-          "string"
-            ? errorData.error
-            : JSON.stringify(
-                errorData.error
-              );
-      }
-    } catch {
-      // Keep default error message.
-    }
-
     throw new Error(
-      errorMessage
+      "Failed to send log"
     );
   }
 
@@ -474,23 +540,10 @@ export async function sendLog(
 }
 
 // ==========================================================
-// HEALTH CHECK
+// HEALTH
 // ==========================================================
 
-export interface HealthResponse {
-  status: string;
-
-  uptime: number;
-
-  timestamp: string;
-
-  services: {
-    mongodb: string;
-    redis: string;
-  };
-}
-
-export async function getHealth(): Promise<HealthResponse> {
+export async function getHealth() {
   const response =
     await fetch(
       `${API_URL}/api/health`
@@ -506,7 +559,7 @@ export async function getHealth(): Promise<HealthResponse> {
 }
 
 // ==========================================================
-// EXPORT API URL
+// API URL
 // ==========================================================
 
 export { API_URL };

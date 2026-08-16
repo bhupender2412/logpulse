@@ -10,8 +10,10 @@ import {
   getLogStats,
   getLogTimeSeries,
   getLogs,
+  getProjectStats,
   type Log,
   type LogLevel,
+  type ProjectStatsPoint,
   type TimeRange,
   type TimeSeriesPoint,
 } from "../api/logsApi";
@@ -47,16 +49,18 @@ const emptyStats: DashboardStats = {
 };
 
 export default function Dashboard() {
-  // ==========================================================
-  // LOGS / PAGINATION
-  // ==========================================================
+  const [logs, setLogs] =
+    useState<Log[]>([]);
 
-  const [logs, setLogs] = useState<Log[]>([]);
   const [loadingLogs, setLoadingLogs] =
     useState(true);
 
-  const [page, setPage] = useState(1);
-  const [totalLogs, setTotalLogs] = useState(0);
+  const [page, setPage] =
+    useState(1);
+
+  const [totalLogs, setTotalLogs] =
+    useState(0);
+
   const [totalPages, setTotalPages] =
     useState(0);
 
@@ -67,10 +71,6 @@ export default function Dashboard() {
     hasPreviousPage,
     setHasPreviousPage,
   ] = useState(false);
-
-  // ==========================================================
-  // FILTERS
-  // ==========================================================
 
   const [searchTerm, setSearchTerm] =
     useState("");
@@ -86,10 +86,6 @@ export default function Dashboard() {
   const [timeRange, setTimeRange] =
     useState<TimeRange>("7d");
 
-  // ==========================================================
-  // ANALYTICS
-  // ==========================================================
-
   const [stats, setStats] =
     useState<DashboardStats>(
       emptyStats
@@ -98,7 +94,16 @@ export default function Dashboard() {
   const [
     timeSeries,
     setTimeSeries,
-  ] = useState<TimeSeriesPoint[]>([]);
+  ] = useState<TimeSeriesPoint[]>(
+    []
+  );
+
+  const [
+    projectStats,
+    setProjectStats,
+  ] = useState<
+    ProjectStatsPoint[]
+  >([]);
 
   const [loadingStats, setLoadingStats] =
     useState(true);
@@ -108,9 +113,10 @@ export default function Dashboard() {
     setLoadingTimeSeries,
   ] = useState(true);
 
-  // ==========================================================
-  // GENERAL
-  // ==========================================================
+  const [
+    loadingProjectStats,
+    setLoadingProjectStats,
+  ] = useState(true);
 
   const [connected, setConnected] =
     useState(false);
@@ -119,24 +125,21 @@ export default function Dashboard() {
     useState("");
 
   // ==========================================================
-  // PROJECTS
+  // PROJECT LIST
   // ==========================================================
 
   const projects = useMemo(() => {
-    return Array.from(
-      new Set(
-        logs
-          .map(
-            (log) =>
-              log.projectId
-          )
-          .filter(Boolean)
+    return projectStats
+      .map(
+        (item) =>
+          item.projectId
       )
-    ).sort();
-  }, [logs]);
+      .filter(Boolean)
+      .sort();
+  }, [projectStats]);
 
   // ==========================================================
-  // LOAD LOGS
+  // LOAD PAGINATED LOGS
   // ==========================================================
 
   const loadLogs = useCallback(
@@ -160,7 +163,11 @@ export default function Dashboard() {
 
         setLogs(response.logs);
         setPage(response.page);
-        setTotalLogs(response.total);
+
+        setTotalLogs(
+          response.total
+        );
+
         setTotalPages(
           response.totalPages
         );
@@ -291,7 +298,50 @@ export default function Dashboard() {
     ]);
 
   // ==========================================================
-  // RELOAD WHEN FILTERS CHANGE
+  // LOAD PROJECT STATS
+  // ==========================================================
+
+  const loadProjectStats =
+    useCallback(async () => {
+      try {
+        setLoadingProjectStats(
+          true
+        );
+
+        const response =
+          await getProjectStats({
+            range: timeRange,
+            search: searchTerm,
+            projectId:
+              selectedProject,
+            level:
+              selectedLevel,
+          });
+
+        setProjectStats(
+          response.data
+        );
+      } catch (err) {
+        console.error(
+          "Load Project Stats Error:",
+          err
+        );
+
+        setProjectStats([]);
+      } finally {
+        setLoadingProjectStats(
+          false
+        );
+      }
+    }, [
+      timeRange,
+      searchTerm,
+      selectedProject,
+      selectedLevel,
+    ]);
+
+  // ==========================================================
+  // FILTER / TIME RANGE CHANGES
   // ==========================================================
 
   useEffect(() => {
@@ -310,9 +360,11 @@ export default function Dashboard() {
   useEffect(() => {
     loadStats();
     loadTimeSeries();
+    loadProjectStats();
   }, [
     loadStats,
     loadTimeSeries,
+    loadProjectStats,
   ]);
 
   // ==========================================================
@@ -345,16 +397,12 @@ export default function Dashboard() {
         newLog
       );
 
-      // IMPORTANT:
-      // Log uses _id, not id.
       setLogs((previousLogs) => {
-        const newId =
-          newLog._id;
-
         const exists =
           previousLogs.some(
             (log) =>
-              log._id === newId
+              log._id ===
+              newLog._id
           );
 
         if (exists) {
@@ -370,12 +418,9 @@ export default function Dashboard() {
         );
       });
 
-      // Refresh backend-driven analytics.
       void loadStats();
       void loadTimeSeries();
-
-      // Refresh current page so total/page metadata
-      // remains authoritative from MongoDB.
+      void loadProjectStats();
       void loadLogs(page);
     };
 
@@ -418,6 +463,7 @@ export default function Dashboard() {
     loadLogs,
     loadStats,
     loadTimeSeries,
+    loadProjectStats,
     page,
   ]);
 
@@ -425,38 +471,10 @@ export default function Dashboard() {
   // PROJECT ACTIVITY
   // ==========================================================
 
-  const projectActivity =
-    useMemo(() => {
-      const counts: Record<
-        string,
-        number
-      > = {};
-
-      logs.forEach((log) => {
-        counts[log.projectId] =
-          (counts[
-            log.projectId
-          ] || 0) + 1;
-      });
-
-      return Object.entries(counts)
-        .map(
-          ([project, count]) => ({
-            project,
-            count,
-          })
-        )
-        .sort(
-          (a, b) =>
-            b.count - a.count
-        )
-        .slice(0, 8);
-    }, [logs]);
-
   const maxProjectCount =
-    projectActivity.length > 0
+    projectStats.length > 0
       ? Math.max(
-          ...projectActivity.map(
+          ...projectStats.map(
             (item) =>
               item.count
           )
@@ -464,7 +482,7 @@ export default function Dashboard() {
       : 1;
 
   // ==========================================================
-  // TIME SERIES DATA
+  // CHART DATA
   // ==========================================================
 
   const chartData =
@@ -552,7 +570,6 @@ export default function Dashboard() {
       case "warn":
         return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
 
-      case "info":
       default:
         return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
     }
@@ -625,8 +642,6 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
 
-          {/* SEARCH */}
-
           <div>
             <label className="block text-sm text-gray-400 mb-2">
               Search Logs
@@ -644,8 +659,6 @@ export default function Dashboard() {
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none focus:border-emerald-500"
             />
           </div>
-
-          {/* PROJECT */}
 
           <div>
             <label className="block text-sm text-gray-400 mb-2">
@@ -679,8 +692,6 @@ export default function Dashboard() {
             </select>
           </div>
 
-          {/* LEVEL */}
-
           <div>
             <label className="block text-sm text-gray-400 mb-2">
               Level
@@ -694,6 +705,7 @@ export default function Dashboard() {
                     | LogLevel
                     | "all"
                 );
+
                 setPage(1);
               }}
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
@@ -719,8 +731,6 @@ export default function Dashboard() {
               </option>
             </select>
           </div>
-
-          {/* TIME RANGE */}
 
           <div>
             <label className="block text-sm text-gray-400 mb-2">
@@ -765,8 +775,6 @@ export default function Dashboard() {
 
         </div>
 
-        {/* FILTER INFO */}
-
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-4">
 
           <div className="text-sm text-gray-500">
@@ -796,9 +804,9 @@ export default function Dashboard() {
               disabled={
                 !filtersActive
               }
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
+              className={`px-4 py-2 rounded-lg font-semibold ${
                 filtersActive
-                  ? "bg-zinc-800 hover:bg-zinc-700 text-white"
+                  ? "bg-zinc-800 hover:bg-zinc-700"
                   : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
               }`}
             >
@@ -811,7 +819,7 @@ export default function Dashboard() {
 
       </div>
 
-      {/* STATISTICS */}
+      {/* STATS */}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
 
@@ -899,7 +907,7 @@ export default function Dashboard() {
             Logs by severity
           </p>
 
-          <div className="flex flex-col items-center justify-center mt-5">
+          <div className="flex flex-col items-center mt-5">
 
             <div
               className="w-52 h-52 rounded-full flex items-center justify-center"
@@ -970,13 +978,11 @@ export default function Dashboard() {
           <div className="flex-1 flex flex-col items-center justify-center">
 
             <div className="text-7xl font-bold text-red-400">
-
               {loadingStats
                 ? "..."
                 : `${stats.errorRate.toFixed(
                     1
                   )}%`}
-
             </div>
 
             <p className="text-gray-400 mt-4">
@@ -987,7 +993,8 @@ export default function Dashboard() {
               <p className="text-sm text-gray-600 mt-2">
                 {stats.error +
                   stats.fatal}{" "}
-                out of {stats.total}
+                out of{" "}
+                {stats.total}
               </p>
             )}
 
@@ -1004,18 +1011,21 @@ export default function Dashboard() {
           </h2>
 
           <p className="text-gray-400 mt-1 mb-5">
-            Most active projects on this page
+            Most active projects
           </p>
 
-          {projectActivity.length ===
-          0 ? (
+          {loadingProjectStats ? (
+            <div className="h-64 flex items-center justify-center text-gray-500">
+              Loading project activity...
+            </div>
+          ) : projectStats.length === 0 ? (
             <div className="h-64 flex items-center justify-center text-gray-500">
               No project activity
             </div>
           ) : (
             <div className="space-y-4">
 
-              {projectActivity.map(
+              {projectStats.map(
                 (item) => {
                   const percentage =
                     (item.count /
@@ -1024,17 +1034,20 @@ export default function Dashboard() {
 
                   return (
                     <div
-                      key={item.project}
+                      key={
+                        item.projectId
+                      }
                     >
+
                       <div className="flex justify-between gap-3 mb-1">
 
                         <span
                           className="text-sm text-gray-300 truncate"
                           title={
-                            item.project
+                            item.projectId
                           }
                         >
-                          {item.project}
+                          {item.projectId}
                         </span>
 
                         <span className="text-sm text-gray-500">
@@ -1053,6 +1066,7 @@ export default function Dashboard() {
                         />
 
                       </div>
+
                     </div>
                   );
                 }
@@ -1155,6 +1169,7 @@ export default function Dashboard() {
 
             logs.map(
               (log, index) => {
+
                 const logId =
                   log._id ||
                   `${log.timestamp}-${log.projectId}-${index}`;
@@ -1333,6 +1348,7 @@ function StatCard({
 }: StatCardProps) {
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+
       <p className="text-gray-400 text-sm">
         {title}
       </p>
@@ -1342,12 +1358,13 @@ function StatCard({
       >
         {value}
       </h2>
+
     </div>
   );
 }
 
 // ============================================================
-// LEGEND ITEM
+// LEGEND
 // ============================================================
 
 interface LegendItemProps {
@@ -1363,6 +1380,7 @@ function LegendItem({
 }: LegendItemProps) {
   return (
     <div className="flex items-center gap-2">
+
       <span
         className={`w-3 h-3 rounded-full ${dotClass}`}
       />
@@ -1370,6 +1388,9 @@ function LegendItem({
       <span>
         {label} ({value})
       </span>
+
     </div>
   );
 }
+
+

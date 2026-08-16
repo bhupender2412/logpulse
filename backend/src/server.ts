@@ -2,27 +2,15 @@ import express, {
   Request,
   Response,
 } from "express";
-
 import http from "http";
-
-import {
-  Server,
-} from "socket.io";
-
+import { Server } from "socket.io";
 import cors from "cors";
-
 import dotenv from "dotenv";
-
 import { z } from "zod";
-
 import mongoose from "mongoose";
 
 import { LogModel } from "./models/Log";
-
-import {
-  connectDB,
-} from "./config/db";
-
+import { connectDB } from "./config/db";
 import {
   redisClient,
   connectRedis,
@@ -166,15 +154,14 @@ function getLevelFilter(
 function getTimeRange(
   value: unknown
 ): TimeRange {
-  const validRanges: TimeRange[] =
-    [
-      "1h",
-      "6h",
-      "24h",
-      "7d",
-      "30d",
-      "all",
-    ];
+  const validRanges: TimeRange[] = [
+    "1h",
+    "6h",
+    "24h",
+    "7d",
+    "30d",
+    "all",
+  ];
 
   if (
     typeof value === "string" &&
@@ -196,9 +183,7 @@ function buildLogMatch(
     unknown
   > = {};
 
-  // --------------------------------------------------------
-  // PROJECT
-  // --------------------------------------------------------
+  // PROJECT FILTER
 
   if (
     typeof query.projectId ===
@@ -209,9 +194,7 @@ function buildLogMatch(
       query.projectId.trim();
   }
 
-  // --------------------------------------------------------
-  // LEVEL
-  // --------------------------------------------------------
+  // LEVEL FILTER
 
   const level = getLevelFilter(
     query.level
@@ -221,9 +204,7 @@ function buildLogMatch(
     filter.level = level;
   }
 
-  // --------------------------------------------------------
-  // SEARCH
-  // --------------------------------------------------------
+  // SEARCH FILTER
 
   if (
     typeof query.search ===
@@ -276,7 +257,7 @@ function buildTimeMatch(
 }
 
 // ==========================================================
-// ROOT ROUTE
+// ROOT
 // ==========================================================
 
 app.get(
@@ -291,7 +272,7 @@ app.get(
 );
 
 // ==========================================================
-// HEALTH CHECK
+// HEALTH
 // ==========================================================
 
 app.get(
@@ -307,9 +288,7 @@ app.get(
       if (redisClient.isOpen) {
         try {
           await redisClient.ping();
-
-          redisStatus =
-            "connected";
+          redisStatus = "connected";
         } catch {
           redisStatus = "error";
         }
@@ -345,7 +324,6 @@ app.get(
           services: {
             mongodb:
               mongoStatus,
-
             redis:
               redisStatus,
           },
@@ -366,7 +344,7 @@ app.get(
 );
 
 // ==========================================================
-// DATABASE DEBUG ROUTE
+// DATABASE DEBUG
 // ==========================================================
 
 app.get(
@@ -388,17 +366,15 @@ app.get(
               : "not connected",
 
           host:
-            mongoose.connection
-              .host,
+            mongoose.connection.host,
 
           database:
-            mongoose.connection
-              .db?.databaseName ||
+            mongoose.connection.db
+              ?.databaseName ||
             "unknown",
 
           collection:
-            LogModel.collection
-              .name,
+            LogModel.collection.name,
         },
 
         environment: {
@@ -427,15 +403,7 @@ app.get(
 );
 
 // ==========================================================
-// GET LOGS - PAGINATED
-//
-// Example:
-// /api/v1/logs?page=1&limit=25
-//
-// Filters:
-// ?projectId=auth-service
-// ?level=error
-// ?search=database
+// GET LOGS - PAGINATION
 // ==========================================================
 
 app.get(
@@ -494,15 +462,10 @@ app.get(
 
       return res.status(200).json({
         success: true,
-
         page,
-
         limit,
-
         total,
-
         totalPages,
-
         count: logs.length,
 
         hasNextPage:
@@ -514,22 +477,19 @@ app.get(
         filters: {
           search:
             typeof req.query
-              .search ===
-            "string"
+              .search === "string"
               ? req.query.search
               : "",
 
           projectId:
             typeof req.query
-              .projectId ===
-            "string"
+              .projectId === "string"
               ? req.query.projectId
               : "all",
 
           level:
             typeof req.query
-              .level ===
-            "string"
+              .level === "string"
               ? req.query.level
               : "all",
         },
@@ -553,15 +513,6 @@ app.get(
 
 // ==========================================================
 // LOG STATISTICS
-//
-// Example:
-// /api/v1/logs/stats?range=7d
-//
-// Supports:
-// range
-// projectId
-// level
-// search
 // ==========================================================
 
 app.get(
@@ -659,19 +610,12 @@ app.get(
 
       return res.status(200).json({
         success: true,
-
         range,
-
         total,
-
         info: counts.info,
-
         warn: counts.warn,
-
         error: counts.error,
-
         fatal: counts.fatal,
-
         errorRate,
       });
     } catch (error) {
@@ -690,10 +634,119 @@ app.get(
 );
 
 // ==========================================================
-// LOG TIME SERIES
+// PROJECT ACTIVITY STATISTICS
 //
-// Example:
-// /api/v1/logs/timeseries?range=7d
+// GET:
+// /api/v1/logs/projects/stats?range=7d
+//
+// Filters supported:
+// range
+// search
+// projectId
+// level
+// ==========================================================
+
+app.get(
+  "/api/v1/logs/projects/stats",
+  async (
+    req: Request,
+    res: Response
+  ) => {
+    try {
+      const range =
+        getTimeRange(
+          req.query.range
+        );
+
+      const baseFilter =
+        buildLogMatch(
+          req.query as Record<
+            string,
+            unknown
+          >
+        );
+
+      const timeFilter =
+        buildTimeMatch(range);
+
+      const match = {
+        ...baseFilter,
+        ...timeFilter,
+      };
+
+      const projectStats =
+        await LogModel.aggregate([
+          {
+            $match: match,
+          },
+
+          {
+            $group: {
+              _id: "$projectId",
+
+              count: {
+                $sum: 1,
+              },
+            },
+          },
+
+          {
+            $sort: {
+              count: -1,
+              _id: 1,
+            },
+          },
+
+          {
+            $limit: 10,
+          },
+        ]);
+
+      const total =
+        projectStats.reduce(
+          (sum, project) =>
+            sum + project.count,
+          0
+        );
+
+      const data =
+        projectStats.map(
+          (project) => ({
+            projectId:
+              project._id,
+            count:
+              project.count,
+          })
+        );
+
+      return res.status(200).json({
+        success: true,
+
+        range,
+
+        count: data.length,
+
+        total,
+
+        data,
+      });
+    } catch (error) {
+      console.error(
+        "Project Stats Error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          "Failed to calculate project statistics",
+      });
+    }
+  }
+);
+
+// ==========================================================
+// TIME SERIES
 // ==========================================================
 
 app.get(
@@ -723,10 +776,6 @@ app.get(
         ...baseFilter,
         ...timeFilter,
       };
-
-      // ------------------------------------------------------
-      // Decide aggregation unit
-      // ------------------------------------------------------
 
       let unit:
         | "minute"
@@ -779,11 +828,8 @@ app.get(
               _id: {
                 $dateTrunc: {
                   date: "$timestamp",
-
                   unit,
-
                   binSize,
-
                   timezone: "UTC",
                 },
               },
@@ -916,9 +962,11 @@ app.get(
             timestamp:
               date.toISOString(),
 
-            info: item.info || 0,
+            info:
+              item.info || 0,
 
-            warn: item.warn || 0,
+            warn:
+              item.warn || 0,
 
             error:
               item.error || 0,
@@ -964,10 +1012,9 @@ app.get(
 
 // ==========================================================
 // GET LOGS BY PROJECT
-//
 // IMPORTANT:
-// This route is AFTER /stats and /timeseries,
-// so those routes are not interpreted as project IDs.
+// This route comes AFTER /projects/stats,
+// otherwise "projects" could be interpreted as projectId.
 // ==========================================================
 
 app.get(
@@ -977,8 +1024,9 @@ app.get(
     res: Response
   ) => {
     try {
-      const { projectId } =
-        req.params;
+      const {
+        projectId,
+      } = req.params;
 
       const page =
         parsePositiveInteger(
@@ -1062,7 +1110,7 @@ app.get(
 );
 
 // ==========================================================
-// SOCKET.IO CONNECTION
+// SOCKET.IO
 // ==========================================================
 
 io.on(
@@ -1084,7 +1132,7 @@ io.on(
 );
 
 // ==========================================================
-// VALIDATION SCHEMA
+// VALIDATION
 // ==========================================================
 
 const LogIngestSchema =
@@ -1167,10 +1215,6 @@ app.post(
       mongoose.connection
         .readyState !== 1
     ) {
-      console.error(
-        "❌ MongoDB is not connected"
-      );
-
       return res.status(503).json({
         success: false,
         error:
@@ -1179,13 +1223,7 @@ app.post(
     }
 
     try {
-      // ====================================================
-      // 1. SAVE TO MONGODB
-      // ====================================================
-
-      console.log(
-        "💾 Saving log to MongoDB..."
-      );
+      // SAVE MONGODB
 
       const savedLog =
         await LogModel.create({
@@ -1201,14 +1239,14 @@ app.post(
         savedLog._id.toString()
       );
 
-      // ====================================================
-      // 2. REDIS STREAM
-      // ====================================================
+      // REDIS
 
       let entryId =
         `mongo-${savedLog._id}`;
 
-      if (redisClient.isOpen) {
+      if (
+        redisClient.isOpen
+      ) {
         try {
           entryId =
             await redisClient.xAdd(
@@ -1228,11 +1266,6 @@ app.post(
                     .toString(),
               }
             );
-
-          console.log(
-            "📡 Redis stream entry:",
-            entryId
-          );
         } catch (redisError) {
           console.error(
             "⚠️ Redis Stream Error:",
@@ -1241,9 +1274,7 @@ app.post(
         }
       }
 
-      // ====================================================
-      // 3. SOCKET.IO
-      // ====================================================
+      // SOCKET
 
       io.emit("log:new", {
         id: savedLog._id
@@ -1261,14 +1292,6 @@ app.post(
 
         timestamp,
       });
-
-      console.log(
-        "📡 Socket.IO event emitted"
-      );
-
-      // ====================================================
-      // 4. RESPONSE
-      // ====================================================
 
       return res.status(201).json({
         success: true,
@@ -1297,7 +1320,7 @@ app.post(
 );
 
 // ==========================================================
-// START SERVER
+// START
 // ==========================================================
 
 const PORT =
@@ -1318,10 +1341,6 @@ async function start() {
       "===================================="
     );
 
-    // ------------------------------------------------------
-    // MongoDB
-    // ------------------------------------------------------
-
     await connectDB();
 
     console.log(
@@ -1336,13 +1355,8 @@ async function start() {
 
     console.log(
       "📋 Collection:",
-      LogModel.collection
-        .name
+      LogModel.collection.name
     );
-
-    // ------------------------------------------------------
-    // Redis
-    // ------------------------------------------------------
 
     try {
       await connectRedis();
@@ -1360,10 +1374,6 @@ async function start() {
         "⚠️ Continuing without Redis..."
       );
     }
-
-    // ------------------------------------------------------
-    // HTTP SERVER
-    // ------------------------------------------------------
 
     server.listen(
       PORT,
@@ -1398,6 +1408,10 @@ async function start() {
         );
 
         console.log(
+          `📊 Project Stats: /api/v1/logs/projects/stats`
+        );
+
+        console.log(
           `📡 Socket.IO Ready`
         );
 
@@ -1423,7 +1437,7 @@ async function start() {
 start();
 
 // ==========================================================
-// GRACEFUL SHUTDOWN
+// SHUTDOWN
 // ==========================================================
 
 async function shutdown() {
@@ -1432,9 +1446,10 @@ async function shutdown() {
   );
 
   try {
-    if (redisClient.isOpen) {
+    if (
+      redisClient.isOpen
+    ) {
       await redisClient.quit();
-
       console.log(
         "🔴 Redis connection closed"
       );
