@@ -6,6 +6,8 @@ import {
 } from "react";
 import { io, Socket } from "socket.io-client";
 
+import LogDetailsModal from "../components/LogDetailsModal";
+
 import {
   getLogStats,
   getLogTimeSeries,
@@ -49,8 +51,18 @@ const emptyStats: DashboardStats = {
 };
 
 export default function Dashboard() {
-  const [logs, setLogs] =
-    useState<Log[]>([]);
+  // ==========================================================
+  // SELECTED LOG
+  // ==========================================================
+
+  const [selectedLog, setSelectedLog] =
+    useState<Log | null>(null);
+
+  // ==========================================================
+  // LOGS / PAGINATION
+  // ==========================================================
+
+  const [logs, setLogs] = useState<Log[]>([]);
 
   const [loadingLogs, setLoadingLogs] =
     useState(true);
@@ -72,11 +84,17 @@ export default function Dashboard() {
     setHasPreviousPage,
   ] = useState(false);
 
+  // ==========================================================
+  // FILTERS
+  // ==========================================================
+
   const [searchTerm, setSearchTerm] =
     useState("");
 
-  const [selectedLevel, setSelectedLevel] =
-    useState<LogLevel | "all">("all");
+  const [
+    selectedLevel,
+    setSelectedLevel,
+  ] = useState<LogLevel | "all">("all");
 
   const [
     selectedProject,
@@ -86,6 +104,10 @@ export default function Dashboard() {
   const [timeRange, setTimeRange] =
     useState<TimeRange>("7d");
 
+  // ==========================================================
+  // ANALYTICS
+  // ==========================================================
+
   const [stats, setStats] =
     useState<DashboardStats>(
       emptyStats
@@ -94,16 +116,12 @@ export default function Dashboard() {
   const [
     timeSeries,
     setTimeSeries,
-  ] = useState<TimeSeriesPoint[]>(
-    []
-  );
+  ] = useState<TimeSeriesPoint[]>([]);
 
   const [
     projectStats,
     setProjectStats,
-  ] = useState<
-    ProjectStatsPoint[]
-  >([]);
+  ] = useState<ProjectStatsPoint[]>([]);
 
   const [loadingStats, setLoadingStats] =
     useState(true);
@@ -117,6 +135,10 @@ export default function Dashboard() {
     loadingProjectStats,
     setLoadingProjectStats,
   ] = useState(true);
+
+  // ==========================================================
+  // GENERAL
+  // ==========================================================
 
   const [connected, setConnected] =
     useState(false);
@@ -162,6 +184,7 @@ export default function Dashboard() {
           });
 
         setLogs(response.logs);
+
         setPage(response.page);
 
         setTotalLogs(
@@ -208,7 +231,7 @@ export default function Dashboard() {
   );
 
   // ==========================================================
-  // LOAD STATS
+  // LOAD STATISTICS
   // ==========================================================
 
   const loadStats = useCallback(
@@ -298,7 +321,7 @@ export default function Dashboard() {
     ]);
 
   // ==========================================================
-  // LOAD PROJECT STATS
+  // LOAD PROJECT STATISTICS
   // ==========================================================
 
   const loadProjectStats =
@@ -341,7 +364,7 @@ export default function Dashboard() {
     ]);
 
   // ==========================================================
-  // FILTER / TIME RANGE CHANGES
+  // RESET TO PAGE 1 WHEN FILTERS CHANGE
   // ==========================================================
 
   useEffect(() => {
@@ -353,14 +376,22 @@ export default function Dashboard() {
     timeRange,
   ]);
 
-  useEffect(() => {
-    loadLogs(page);
-  }, [page, loadLogs]);
+  // ==========================================================
+  // LOAD LOGS WHEN PAGE CHANGES
+  // ==========================================================
 
   useEffect(() => {
-    loadStats();
-    loadTimeSeries();
-    loadProjectStats();
+    void loadLogs(page);
+  }, [page, loadLogs]);
+
+  // ==========================================================
+  // LOAD ANALYTICS WHEN FILTERS CHANGE
+  // ==========================================================
+
+  useEffect(() => {
+    void loadStats();
+    void loadTimeSeries();
+    void loadProjectStats();
   }, [
     loadStats,
     loadTimeSeries,
@@ -418,9 +449,12 @@ export default function Dashboard() {
         );
       });
 
+      // Refresh backend-driven analytics.
       void loadStats();
       void loadTimeSeries();
       void loadProjectStats();
+
+      // Refresh current page metadata.
       void loadLogs(page);
     };
 
@@ -554,7 +588,7 @@ export default function Dashboard() {
         )`;
 
   // ==========================================================
-  // BADGE
+  // LEVEL BADGE
   // ==========================================================
 
   const getBadgeClass = (
@@ -570,6 +604,7 @@ export default function Dashboard() {
       case "warn":
         return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
 
+      case "info":
       default:
         return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
     }
@@ -600,7 +635,9 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-black text-white p-6">
 
-      {/* HEADER */}
+      {/* ======================================================
+          HEADER
+      ====================================================== */}
 
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
 
@@ -628,7 +665,9 @@ export default function Dashboard() {
 
       </div>
 
-      {/* ERROR */}
+      {/* ======================================================
+          ERROR
+      ====================================================== */}
 
       {error && (
         <div className="mb-6 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400">
@@ -636,11 +675,15 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* FILTERS */}
+      {/* ======================================================
+          FILTERS
+      ====================================================== */}
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-6">
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+
+          {/* SEARCH */}
 
           <div>
             <label className="block text-sm text-gray-400 mb-2">
@@ -659,6 +702,8 @@ export default function Dashboard() {
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none focus:border-emerald-500"
             />
           </div>
+
+          {/* PROJECT */}
 
           <div>
             <label className="block text-sm text-gray-400 mb-2">
@@ -692,6 +737,8 @@ export default function Dashboard() {
             </select>
           </div>
 
+          {/* LEVEL */}
+
           <div>
             <label className="block text-sm text-gray-400 mb-2">
               Level
@@ -705,7 +752,6 @@ export default function Dashboard() {
                     | LogLevel
                     | "all"
                 );
-
                 setPage(1);
               }}
               className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
@@ -731,6 +777,8 @@ export default function Dashboard() {
               </option>
             </select>
           </div>
+
+          {/* TIME RANGE */}
 
           <div>
             <label className="block text-sm text-gray-400 mb-2">
@@ -819,7 +867,9 @@ export default function Dashboard() {
 
       </div>
 
-      {/* STATS */}
+      {/* ======================================================
+          STATS
+      ====================================================== */}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
 
@@ -875,7 +925,9 @@ export default function Dashboard() {
 
       </div>
 
-      {/* LOGS OVER TIME */}
+      {/* ======================================================
+          LOGS OVER TIME
+      ====================================================== */}
 
       <div className="mb-8">
 
@@ -891,7 +943,9 @@ export default function Dashboard() {
 
       </div>
 
-      {/* SECONDARY ANALYTICS */}
+      {/* ======================================================
+          ANALYTICS
+      ====================================================== */}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
 
@@ -1079,7 +1133,9 @@ export default function Dashboard() {
 
       </div>
 
-      {/* STATUS */}
+      {/* ======================================================
+          STATUS
+      ====================================================== */}
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-8">
 
@@ -1127,7 +1183,9 @@ export default function Dashboard() {
 
       </div>
 
-      {/* LOG TABLE */}
+      {/* ======================================================
+          LOG TABLE
+      ====================================================== */}
 
       <div className="rounded-xl overflow-hidden border border-zinc-800">
 
@@ -1154,22 +1212,16 @@ export default function Dashboard() {
         <div className="max-h-[650px] overflow-y-auto">
 
           {loadingLogs ? (
-
             <div className="p-10 text-center text-gray-500">
               Loading logs...
             </div>
-
           ) : logs.length === 0 ? (
-
             <div className="p-10 text-center text-gray-500">
               No logs found.
             </div>
-
           ) : (
-
             logs.map(
               (log, index) => {
-
                 const logId =
                   log._id ||
                   `${log.timestamp}-${log.projectId}-${index}`;
@@ -1177,7 +1229,26 @@ export default function Dashboard() {
                 return (
                   <div
                     key={logId}
-                    className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 p-4 border-t border-zinc-800 hover:bg-zinc-900/50 transition"
+                    onClick={() =>
+                      setSelectedLog(
+                        log
+                      )
+                    }
+                    className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 p-4 border-t border-zinc-800 hover:bg-zinc-900/50 transition cursor-pointer"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key ===
+                          "Enter" ||
+                        event.key ===
+                          " "
+                      ) {
+                        setSelectedLog(
+                          log
+                        );
+                      }
+                    }}
                   >
 
                     <div className="md:col-span-2">
@@ -1248,14 +1319,15 @@ export default function Dashboard() {
                 );
               }
             )
-
           )}
 
         </div>
 
       </div>
 
-      {/* PAGINATION */}
+      {/* ======================================================
+          PAGINATION
+      ====================================================== */}
 
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-6">
 
@@ -1320,6 +1392,17 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* ======================================================
+          LOG DETAILS MODAL
+      ====================================================== */}
+
+      <LogDetailsModal
+        log={selectedLog}
+        onClose={() =>
+          setSelectedLog(null)
+        }
+      />
 
       {/* FOOTER */}
 
@@ -1392,5 +1475,3 @@ function LegendItem({
     </div>
   );
 }
-
-
