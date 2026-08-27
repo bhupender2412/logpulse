@@ -13,3 +13,17 @@ build/
 .vscode/
 .idea/
 .DS_Store
+# Environment files
+backend/.env
+frontend/.env
+.env
+.env.*
+
+# Environment files
+backend/.env
+frontend/.env
+.env
+.env.*
+!.env.example
+!backend/.env.example
+!frontend/.env.example

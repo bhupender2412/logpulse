@@ -1,6 +1,45 @@
+import {
+  getAuthHeaders,
+} from "./authApi";
+
+// ==========================================================
+// API URL
+// ==========================================================
+
 const API_URL =
   import.meta.env.VITE_API_URL ||
-  "https://logpulse-api-1tla.onrender.com";
+  "http://localhost:4000";
+
+// ==========================================================
+// AUTHENTICATED FETCH
+// ==========================================================
+
+async function authenticatedFetch(
+  url: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  const headers =
+    new Headers(options.headers);
+
+  const authHeaders =
+    getAuthHeaders();
+
+  Object.entries(
+    authHeaders
+  ).forEach(
+    ([key, value]) => {
+      headers.set(
+        key,
+        value
+      );
+    }
+  );
+
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+}
 
 // ==========================================================
 // TYPES
@@ -26,12 +65,22 @@ export type TimeRange =
 
 export interface Log {
   _id: string;
+
   projectId: string;
+
   level: LogLevel;
+
   message: string;
-  metadata?: Record<string, unknown>;
+
+  metadata?: Record<
+    string,
+    unknown
+  >;
+
   timestamp: string;
+
   createdAt?: string;
+
   updatedAt?: string;
 }
 
@@ -41,17 +90,26 @@ export interface Log {
 
 export interface LogsResponse {
   success: boolean;
+
   page: number;
+
   limit: number;
+
   total: number;
+
   totalPages: number;
+
   count: number;
+
   hasNextPage: boolean;
+
   hasPreviousPage: boolean;
 
   filters?: {
     search: string;
+
     projectId: string;
+
     level: string;
   };
 
@@ -59,17 +117,22 @@ export interface LogsResponse {
 }
 
 // ==========================================================
-// STATS
+// STATS RESPONSE
 // ==========================================================
 
 export interface LogStatsResponse {
   success: boolean;
+
   range: TimeRange;
 
   total: number;
+
   info: number;
+
   warn: number;
+
   error: number;
+
   fatal: number;
 
   errorRate: number;
@@ -81,16 +144,23 @@ export interface LogStatsResponse {
 
 export interface TimeSeriesPoint {
   label: string;
+
   timestamp: string;
+
   info: number;
+
   warn: number;
+
   error: number;
+
   fatal: number;
+
   total: number;
 }
 
 export interface LogTimeSeriesResponse {
   success: boolean;
+
   range: TimeRange;
 
   interval: {
@@ -98,6 +168,7 @@ export interface LogTimeSeriesResponse {
       | "minute"
       | "hour"
       | "day";
+
     binSize: number;
   };
 
@@ -112,28 +183,42 @@ export interface LogTimeSeriesResponse {
 
 export interface ProjectStatsPoint {
   projectId: string;
+
   count: number;
 }
 
 export interface ProjectStatsResponse {
   success: boolean;
+
   range: TimeRange;
+
   count: number;
+
   total: number;
+
   data: ProjectStatsPoint[];
 }
 
 // ==========================================================
-// GET LOGS
+// GET LOGS PARAMS
 // ==========================================================
 
 export interface GetLogsParams {
   page?: number;
+
   limit?: number;
+
   search?: string;
+
   projectId?: string;
+
   level?: string;
 }
+
+// ==========================================================
+// GET LOGS
+// JWT PROTECTED
+// ==========================================================
 
 export async function getLogs(
   params: GetLogsParams = {}
@@ -141,14 +226,18 @@ export async function getLogs(
   const query =
     new URLSearchParams();
 
-  if (params.page !== undefined) {
+  if (
+    params.page !== undefined
+  ) {
     query.set(
       "page",
       String(params.page)
     );
   }
 
-  if (params.limit !== undefined) {
+  if (
+    params.limit !== undefined
+  ) {
     query.set(
       "limit",
       String(params.limit)
@@ -194,16 +283,19 @@ export async function getLogs(
       : `${API_URL}/api/v1/logs`;
 
   const response =
-    await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch logs: ${response.status}`
+    await authenticatedFetch(
+      url
     );
-  }
 
   const data =
     await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+        `Failed to fetch logs: ${response.status}`
+    );
+  }
 
   if (!data.success) {
     throw new Error(
@@ -215,15 +307,23 @@ export async function getLogs(
 }
 
 // ==========================================================
-// GET STATS
+// GET STATS PARAMS
 // ==========================================================
 
 export interface GetStatsParams {
   range?: TimeRange;
+
   search?: string;
+
   projectId?: string;
+
   level?: string;
 }
+
+// ==========================================================
+// GET STATS
+// JWT PROTECTED
+// ==========================================================
 
 export async function getLogStats(
   params: GetStatsParams = {}
@@ -267,18 +367,19 @@ export async function getLogStats(
   }
 
   const response =
-    await fetch(
+    await authenticatedFetch(
       `${API_URL}/api/v1/logs/stats?${query.toString()}`
     );
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch log statistics: ${response.status}`
-    );
-  }
-
   const data =
     await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+        `Failed to fetch log statistics: ${response.status}`
+    );
+  }
 
   if (!data.success) {
     throw new Error(
@@ -290,15 +391,23 @@ export async function getLogStats(
 }
 
 // ==========================================================
-// GET TIME SERIES
+// GET TIME SERIES PARAMS
 // ==========================================================
 
 export interface GetTimeSeriesParams {
   range?: TimeRange;
+
   search?: string;
+
   projectId?: string;
+
   level?: string;
 }
+
+// ==========================================================
+// GET TIME SERIES
+// JWT PROTECTED
+// ==========================================================
 
 export async function getLogTimeSeries(
   params: GetTimeSeriesParams = {}
@@ -342,18 +451,19 @@ export async function getLogTimeSeries(
   }
 
   const response =
-    await fetch(
+    await authenticatedFetch(
       `${API_URL}/api/v1/logs/timeseries?${query.toString()}`
     );
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch time-series data: ${response.status}`
-    );
-  }
-
   const data =
     await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+        `Failed to fetch time-series data: ${response.status}`
+    );
+  }
 
   if (!data.success) {
     throw new Error(
@@ -365,15 +475,23 @@ export async function getLogTimeSeries(
 }
 
 // ==========================================================
-// GET PROJECT STATS
+// GET PROJECT STATS PARAMS
 // ==========================================================
 
 export interface GetProjectStatsParams {
   range?: TimeRange;
+
   search?: string;
+
   projectId?: string;
+
   level?: string;
 }
+
+// ==========================================================
+// GET PROJECT STATS
+// JWT PROTECTED
+// ==========================================================
 
 export async function getProjectStats(
   params: GetProjectStatsParams = {}
@@ -417,18 +535,19 @@ export async function getProjectStats(
   }
 
   const response =
-    await fetch(
+    await authenticatedFetch(
       `${API_URL}/api/v1/logs/projects/stats?${query.toString()}`
     );
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch project statistics: ${response.status}`
-    );
-  }
-
   const data =
     await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+        `Failed to fetch project statistics: ${response.status}`
+    );
+  }
 
   if (!data.success) {
     throw new Error(
@@ -440,14 +559,21 @@ export async function getProjectStats(
 }
 
 // ==========================================================
-// GET PROJECT LOGS
+// GET PROJECT LOGS PARAMS
 // ==========================================================
 
 export interface GetProjectLogsParams {
   projectId: string;
+
   page?: number;
+
   limit?: number;
 }
+
+// ==========================================================
+// GET PROJECT LOGS
+// JWT PROTECTED
+// ==========================================================
 
 export async function getProjectLogs(
   params: GetProjectLogsParams
@@ -463,14 +589,18 @@ export async function getProjectLogs(
   const query =
     new URLSearchParams();
 
-  if (params.page !== undefined) {
+  if (
+    params.page !== undefined
+  ) {
     query.set(
       "page",
       String(params.page)
     );
   }
 
-  if (params.limit !== undefined) {
+  if (
+    params.limit !== undefined
+  ) {
     query.set(
       "limit",
       String(params.limit)
@@ -480,37 +610,66 @@ export async function getProjectLogs(
   const queryString =
     query.toString();
 
+  const encodedProjectId =
+    encodeURIComponent(
+      params.projectId
+    );
+
   const url =
     queryString.length > 0
-      ? `${API_URL}/api/v1/logs/${encodeURIComponent(
-          params.projectId
-        )}?${queryString}`
-      : `${API_URL}/api/v1/logs/${encodeURIComponent(
-          params.projectId
-        )}`;
+      ? `${API_URL}/api/v1/logs/${encodedProjectId}?${queryString}`
+      : `${API_URL}/api/v1/logs/${encodedProjectId}`;
 
   const response =
-    await fetch(url);
+    await authenticatedFetch(
+      url
+    );
+
+  const data =
+    await response.json();
 
   if (!response.ok) {
     throw new Error(
-      `Failed to fetch project logs: ${response.status}`
+      data.error ||
+        `Failed to fetch project logs: ${response.status}`
     );
   }
 
-  return response.json();
+  if (!data.success) {
+    throw new Error(
+      "Backend returned an error while fetching project logs"
+    );
+  }
+
+  return data;
 }
 
 // ==========================================================
-// SEND LOG
+// SEND LOG PAYLOAD
 // ==========================================================
 
 export interface SendLogPayload {
   projectId: string;
+
   level: LogLevel;
+
   message: string;
-  metadata?: Record<string, unknown>;
+
+  metadata?: Record<
+    string,
+    unknown
+  >;
 }
+
+// ==========================================================
+// SEND LOG
+//
+// IMPORTANT:
+// This route intentionally does NOT use the user's JWT.
+//
+// Later:
+// POST /api/v1/logs will use a PROJECT API KEY instead.
+// ==========================================================
 
 export async function sendLog(
   log: SendLogPayload
@@ -526,21 +685,30 @@ export async function sendLog(
             "application/json",
         },
 
-        body: JSON.stringify(log),
+        body:
+          JSON.stringify(
+            log
+          ),
       }
     );
 
+  const data =
+    await response.json();
+
   if (!response.ok) {
     throw new Error(
-      "Failed to send log"
+      data.error ||
+        "Failed to send log"
     );
   }
 
-  return response.json();
+  return data;
 }
 
 // ==========================================================
-// HEALTH
+// HEALTH CHECK
+//
+// PUBLIC ROUTE
 // ==========================================================
 
 export async function getHealth() {
@@ -549,17 +717,21 @@ export async function getHealth() {
       `${API_URL}/api/health`
     );
 
+  const data =
+    await response.json();
+
   if (!response.ok) {
     throw new Error(
-      `Health check failed: ${response.status}`
+      data.message ||
+        `Health check failed: ${response.status}`
     );
   }
 
-  return response.json();
+  return data;
 }
 
 // ==========================================================
-// API URL
+// EXPORT API URL
 // ==========================================================
 
 export { API_URL };

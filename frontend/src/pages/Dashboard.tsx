@@ -1,1477 +1,2092 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useState,
+  type ReactNode,
 } from "react";
-import { io, Socket } from "socket.io-client";
-
-import LogDetailsModal from "../components/LogDetailsModal";
 
 import {
-  getLogStats,
-  getLogTimeSeries,
-  getLogs,
-  getProjectStats,
-  type Log,
-  type LogLevel,
-  type ProjectStatsPoint,
-  type TimeRange,
-  type TimeSeriesPoint,
-} from "../api/logsApi";
+  Activity,
+  CheckCircle2,
+  Clock3,
+  RefreshCw,
+  Server,
+  Webhook,
+  XCircle,
+  Zap,
+} from "lucide-react";
 
-import LogsOverTimeChart from "../components/charts/LogsOverTimeChart";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  "https://logpulse-api-1tla.onrender.com";
+import {
+  getEvents,
+  getEventStats,
+  getEventTimeSeries,
+  type EventStatsResponse,
+  type EventTimeRange,
+  type EventTimeSeriesPoint,
+  type WebhookEvent,
+  type WebhookEventStatus,
+} from "../api/eventsApi";
 
-const socket: Socket = io(API_URL, {
-  transports: ["websocket"],
-});
+import {
+  API_URL,
+} from "../api/apiClient";
 
-const PAGE_SIZE = 25;
+import EndpointManager from "../components/EndpointManager";
 
-interface DashboardStats {
-  total: number;
-  info: number;
-  warn: number;
-  error: number;
-  fatal: number;
-  errorRate: number;
-}
+import ProjectManager from "../components/ProjectManager";
 
-const emptyStats: DashboardStats = {
-  total: 0,
-  info: 0,
-  warn: 0,
-  error: 0,
-  fatal: 0,
-  errorRate: 0,
+import WebhookEventDetailsModal from "../components/WebhookEventDetailsModal";
+
+import {
+  useAuth,
+} from "../context/AuthContext";
+
+import {
+  connectSocket,
+  socket,
+} from "../socket/socket";
+
+// ==========================================================
+// CONSTANTS
+// ==========================================================
+
+const RECENT_EVENT_LIMIT =
+  50;
+
+// ==========================================================
+// CONSOLE VIEW
+// ==========================================================
+
+type ConsoleView =
+  | "dashboard"
+  | "projects"
+  | "endpoints";
+
+// ==========================================================
+// EMPTY STATS
+// ==========================================================
+
+const emptyStats: EventStatsResponse = {
+  success:
+    true,
+
+  filters: {
+    projectId:
+      "all",
+
+    endpointId:
+      "all",
+  },
+
+  total:
+    0,
+
+  queued:
+    0,
+
+  processing:
+    0,
+
+  retrying:
+    0,
+
+  successful:
+    0,
+
+  failed:
+    0,
+
+  completedDeliveries:
+    0,
+
+  successRate:
+    0,
+
+  failureRate:
+    0,
+
+  averageLatencyMs:
+    0,
 };
 
+// ==========================================================
+// REALTIME EVENT TYPE
+// ==========================================================
+
+interface RealtimeWebhookEvent {
+  eventId?:
+    string;
+
+  projectId?:
+    string;
+
+  endpointId?:
+    string;
+
+  status?:
+    WebhookEventStatus;
+
+  attempt?:
+    number;
+
+  statusCode?:
+    number | null;
+
+  latencyMs?:
+    number | null;
+}
+
+// ==========================================================
+// DASHBOARD
+// ==========================================================
+
 export default function Dashboard() {
-  // ==========================================================
-  // SELECTED LOG
-  // ==========================================================
+  // ========================================================
+  // AUTH
+  // ========================================================
 
-  const [selectedLog, setSelectedLog] =
-    useState<Log | null>(null);
+  const {
+    user,
+    logout,
+  } =
+    useAuth();
 
-  // ==========================================================
-  // LOGS / PAGINATION
-  // ==========================================================
-
-  const [logs, setLogs] = useState<Log[]>([]);
-
-  const [loadingLogs, setLoadingLogs] =
-    useState(true);
-
-  const [page, setPage] =
-    useState(1);
-
-  const [totalLogs, setTotalLogs] =
-    useState(0);
-
-  const [totalPages, setTotalPages] =
-    useState(0);
-
-  const [hasNextPage, setHasNextPage] =
-    useState(false);
+  // ========================================================
+  // ACTIVE CONSOLE VIEW
+  // ========================================================
 
   const [
-    hasPreviousPage,
-    setHasPreviousPage,
-  ] = useState(false);
+    activeView,
+    setActiveView,
+  ] =
+    useState<ConsoleView>(
+      "dashboard"
+    );
 
-  // ==========================================================
-  // FILTERS
-  // ==========================================================
-
-  const [searchTerm, setSearchTerm] =
-    useState("");
-
-  const [
-    selectedLevel,
-    setSelectedLevel,
-  ] = useState<LogLevel | "all">("all");
+  // ========================================================
+  // SELECTED WEBHOOK EVENT
+  // ========================================================
 
   const [
-    selectedProject,
-    setSelectedProject,
-  ] = useState("all");
+    selectedEventId,
+    setSelectedEventId,
+  ] =
+    useState<string | null>(
+      null
+    );
 
-  const [timeRange, setTimeRange] =
-    useState<TimeRange>("7d");
+  // ========================================================
+  // RANGE
+  // ========================================================
 
-  // ==========================================================
-  // ANALYTICS
-  // ==========================================================
+  const [
+    timeRange,
+    setTimeRange,
+  ] =
+    useState<EventTimeRange>(
+      "24h"
+    );
 
-  const [stats, setStats] =
-    useState<DashboardStats>(
+  // ========================================================
+  // STATISTICS
+  // ========================================================
+
+  const [
+    stats,
+    setStats,
+  ] =
+    useState<EventStatsResponse>(
       emptyStats
     );
+
+  // ========================================================
+  // TIME SERIES
+  // ========================================================
 
   const [
     timeSeries,
     setTimeSeries,
-  ] = useState<TimeSeriesPoint[]>([]);
+  ] =
+    useState<
+      EventTimeSeriesPoint[]
+    >(
+      []
+    );
+
+  // ========================================================
+  // RECENT EVENTS
+  // ========================================================
 
   const [
-    projectStats,
-    setProjectStats,
-  ] = useState<ProjectStatsPoint[]>([]);
+    events,
+    setEvents,
+  ] =
+    useState<
+      WebhookEvent[]
+    >(
+      []
+    );
 
-  const [loadingStats, setLoadingStats] =
-    useState(true);
+  // ========================================================
+  // UI STATE
+  // ========================================================
 
   const [
-    loadingTimeSeries,
-    setLoadingTimeSeries,
-  ] = useState(true);
+    loading,
+    setLoading,
+  ] =
+    useState(
+      true
+    );
 
   const [
-    loadingProjectStats,
-    setLoadingProjectStats,
-  ] = useState(true);
+    refreshing,
+    setRefreshing,
+  ] =
+    useState(
+      false
+    );
 
-  // ==========================================================
-  // GENERAL
-  // ==========================================================
+  const [
+    connected,
+    setConnected,
+  ] =
+    useState(
+      false
+    );
 
-  const [connected, setConnected] =
-    useState(false);
+  const [
+    error,
+    setError,
+  ] =
+    useState(
+      ""
+    );
 
-  const [error, setError] =
-    useState("");
+  // ========================================================
+  // CHANGE CONSOLE VIEW
+  // ========================================================
 
-  // ==========================================================
-  // PROJECT LIST
-  // ==========================================================
-
-  const projects = useMemo(() => {
-    return projectStats
-      .map(
-        (item) =>
-          item.projectId
-      )
-      .filter(Boolean)
-      .sort();
-  }, [projectStats]);
-
-  // ==========================================================
-  // LOAD PAGINATED LOGS
-  // ==========================================================
-
-  const loadLogs = useCallback(
-    async (
-      requestedPage: number
+  const changeView =
+    (
+      view:
+        ConsoleView
     ) => {
-      try {
-        setLoadingLogs(true);
-        setError("");
-
-        const response =
-          await getLogs({
-            page: requestedPage,
-            limit: PAGE_SIZE,
-            search: searchTerm,
-            projectId:
-              selectedProject,
-            level:
-              selectedLevel,
-          });
-
-        setLogs(response.logs);
-
-        setPage(response.page);
-
-        setTotalLogs(
-          response.total
-        );
-
-        setTotalPages(
-          response.totalPages
-        );
-
-        setHasNextPage(
-          response.hasNextPage
-        );
-
-        setHasPreviousPage(
-          response.hasPreviousPage
-        );
-      } catch (err) {
-        console.error(
-          "Load Logs Error:",
-          err
-        );
-
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Failed to load logs"
-        );
-
-        setLogs([]);
-        setTotalLogs(0);
-        setTotalPages(0);
-        setHasNextPage(false);
-        setHasPreviousPage(false);
-      } finally {
-        setLoadingLogs(false);
-      }
-    },
-    [
-      searchTerm,
-      selectedProject,
-      selectedLevel,
-    ]
-  );
-
-  // ==========================================================
-  // LOAD STATISTICS
-  // ==========================================================
-
-  const loadStats = useCallback(
-    async () => {
-      try {
-        setLoadingStats(true);
-
-        const response =
-          await getLogStats({
-            range: timeRange,
-            search: searchTerm,
-            projectId:
-              selectedProject,
-            level:
-              selectedLevel,
-          });
-
-        setStats({
-          total: response.total,
-          info: response.info,
-          warn: response.warn,
-          error: response.error,
-          fatal: response.fatal,
-          errorRate:
-            response.errorRate,
-        });
-      } catch (err) {
-        console.error(
-          "Load Stats Error:",
-          err
-        );
-
-        setStats(emptyStats);
-      } finally {
-        setLoadingStats(false);
-      }
-    },
-    [
-      timeRange,
-      searchTerm,
-      selectedProject,
-      selectedLevel,
-    ]
-  );
-
-  // ==========================================================
-  // LOAD TIME SERIES
-  // ==========================================================
-
-  const loadTimeSeries =
-    useCallback(async () => {
-      try {
-        setLoadingTimeSeries(
-          true
-        );
-
-        const response =
-          await getLogTimeSeries({
-            range: timeRange,
-            search: searchTerm,
-            projectId:
-              selectedProject,
-            level:
-              selectedLevel,
-          });
-
-        setTimeSeries(
-          response.data
-        );
-      } catch (err) {
-        console.error(
-          "Load Time Series Error:",
-          err
-        );
-
-        setTimeSeries([]);
-      } finally {
-        setLoadingTimeSeries(
-          false
-        );
-      }
-    }, [
-      timeRange,
-      searchTerm,
-      selectedProject,
-      selectedLevel,
-    ]);
-
-  // ==========================================================
-  // LOAD PROJECT STATISTICS
-  // ==========================================================
-
-  const loadProjectStats =
-    useCallback(async () => {
-      try {
-        setLoadingProjectStats(
-          true
-        );
-
-        const response =
-          await getProjectStats({
-            range: timeRange,
-            search: searchTerm,
-            projectId:
-              selectedProject,
-            level:
-              selectedLevel,
-          });
-
-        setProjectStats(
-          response.data
-        );
-      } catch (err) {
-        console.error(
-          "Load Project Stats Error:",
-          err
-        );
-
-        setProjectStats([]);
-      } finally {
-        setLoadingProjectStats(
-          false
-        );
-      }
-    }, [
-      timeRange,
-      searchTerm,
-      selectedProject,
-      selectedLevel,
-    ]);
-
-  // ==========================================================
-  // RESET TO PAGE 1 WHEN FILTERS CHANGE
-  // ==========================================================
-
-  useEffect(() => {
-    setPage(1);
-  }, [
-    searchTerm,
-    selectedProject,
-    selectedLevel,
-    timeRange,
-  ]);
-
-  // ==========================================================
-  // LOAD LOGS WHEN PAGE CHANGES
-  // ==========================================================
-
-  useEffect(() => {
-    void loadLogs(page);
-  }, [page, loadLogs]);
-
-  // ==========================================================
-  // LOAD ANALYTICS WHEN FILTERS CHANGE
-  // ==========================================================
-
-  useEffect(() => {
-    void loadStats();
-    void loadTimeSeries();
-    void loadProjectStats();
-  }, [
-    loadStats,
-    loadTimeSeries,
-    loadProjectStats,
-  ]);
-
-  // ==========================================================
-  // SOCKET.IO
-  // ==========================================================
-
-  useEffect(() => {
-    const handleConnect = () => {
-      console.log(
-        "✅ Socket Connected:",
-        socket.id
+      setSelectedEventId(
+        null
       );
 
-      setConnected(true);
+      setActiveView(
+        view
+      );
     };
 
-    const handleDisconnect = () => {
-      console.log(
-        "❌ Socket Disconnected"
-      );
+  // ========================================================
+  // LOAD DASHBOARD DATA
+  // ========================================================
 
-      setConnected(false);
-    };
+  const loadDashboard =
+    useCallback(
+      async (
+        silent =
+          false
+      ) => {
+        try {
+          if (silent) {
+            setRefreshing(
+              true
+            );
+          } else {
+            setLoading(
+              true
+            );
+          }
 
-    const handleNewLog = (
-      newLog: Log
-    ) => {
-      console.log(
-        "📥 New Log:",
-        newLog
-      );
-
-      setLogs((previousLogs) => {
-        const exists =
-          previousLogs.some(
-            (log) =>
-              log._id ===
-              newLog._id
+          setError(
+            ""
           );
 
-        if (exists) {
-          return previousLogs;
+          // ==================================================
+          // LOAD DASHBOARD DATA IN PARALLEL
+          // ==================================================
+
+          const [
+            statsResponse,
+            timeSeriesResponse,
+            eventsResponse,
+          ] =
+            await Promise.all([
+              getEventStats(),
+
+              getEventTimeSeries({
+                range:
+                  timeRange,
+              }),
+
+              getEvents({
+                page:
+                  1,
+
+                limit:
+                  RECENT_EVENT_LIMIT,
+              }),
+            ]);
+
+          // ==================================================
+          // STATS
+          // ==================================================
+
+          setStats(
+            statsResponse
+          );
+
+          // ==================================================
+          // TIME SERIES
+          // ==================================================
+
+          setTimeSeries(
+            Array.isArray(
+              timeSeriesResponse.data
+            )
+              ? timeSeriesResponse.data
+              : []
+          );
+
+          // ==================================================
+          // EVENTS
+          // ==================================================
+
+          setEvents(
+            Array.isArray(
+              eventsResponse.events
+            )
+              ? eventsResponse.events
+              : []
+          );
+        } catch (err) {
+          console.error(
+            "PulseEngine Dashboard Error:",
+            err
+          );
+
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Failed to load PulseEngine dashboard"
+          );
+        } finally {
+          setLoading(
+            false
+          );
+
+          setRefreshing(
+            false
+          );
         }
-
-        return [
-          newLog,
-          ...previousLogs,
-        ].slice(
-          0,
-          PAGE_SIZE
-        );
-      });
-
-      // Refresh backend-driven analytics.
-      void loadStats();
-      void loadTimeSeries();
-      void loadProjectStats();
-
-      // Refresh current page metadata.
-      void loadLogs(page);
-    };
-
-    socket.on(
-      "connect",
-      handleConnect
+      },
+      [
+        timeRange,
+      ]
     );
 
-    socket.on(
-      "disconnect",
-      handleDisconnect
-    );
+  // ========================================================
+  // INITIAL LOAD + RANGE CHANGE
+  // ========================================================
 
-    socket.on(
-      "log:new",
-      handleNewLog
-    );
+  useEffect(
+    () => {
+      void loadDashboard();
+    },
+    [
+      loadDashboard,
+    ]
+  );
 
-    if (socket.connected) {
-      setConnected(true);
-    }
+  // ========================================================
+  // SOCKET.IO REALTIME
+  // ========================================================
 
-    return () => {
-      socket.off(
+  useEffect(
+    () => {
+      // ====================================================
+      // CONNECTED
+      // ====================================================
+
+      const handleConnect =
+        () => {
+          console.log(
+            "✅ PulseEngine Socket Connected:",
+            socket.id
+          );
+
+          setConnected(
+            true
+          );
+        };
+
+      // ====================================================
+      // DISCONNECTED
+      // ====================================================
+
+      const handleDisconnect =
+        () => {
+          console.log(
+            "❌ PulseEngine Socket Disconnected"
+          );
+
+          setConnected(
+            false
+          );
+        };
+
+      // ====================================================
+      // CONNECTION ERROR
+      // ====================================================
+
+      const handleConnectError =
+        (
+          socketError:
+            Error
+        ) => {
+          console.error(
+            "❌ PulseEngine Socket Error:",
+            socketError.message
+          );
+
+          setConnected(
+            false
+          );
+        };
+
+      // ====================================================
+      // WEBHOOK REALTIME EVENT
+      // ====================================================
+
+      const handleWebhookEvent =
+        (
+          realtimeEvent:
+            RealtimeWebhookEvent
+        ) => {
+          console.log(
+            "📡 PulseEngine Realtime Event:",
+            realtimeEvent
+          );
+
+          void loadDashboard(
+            true
+          );
+        };
+
+      // ====================================================
+      // REGISTER LISTENERS
+      // ====================================================
+
+      socket.on(
         "connect",
         handleConnect
       );
 
-      socket.off(
+      socket.on(
         "disconnect",
         handleDisconnect
       );
 
-      socket.off(
-        "log:new",
-        handleNewLog
+      socket.on(
+        "connect_error",
+        handleConnectError
       );
-    };
-  }, [
-    loadLogs,
-    loadStats,
-    loadTimeSeries,
-    loadProjectStats,
-    page,
-  ]);
 
-  // ==========================================================
-  // PROJECT ACTIVITY
-  // ==========================================================
-
-  const maxProjectCount =
-    projectStats.length > 0
-      ? Math.max(
-          ...projectStats.map(
-            (item) =>
-              item.count
-          )
-        )
-      : 1;
-
-  // ==========================================================
-  // CHART DATA
-  // ==========================================================
-
-  const chartData =
-    useMemo(() => {
-      return timeSeries.map(
-        (item) => ({
-          label: item.label,
-          info: item.info,
-          warn: item.warn,
-          error: item.error,
-          fatal: item.fatal,
-        })
+      socket.on(
+        "webhook:event",
+        handleWebhookEvent
       );
-    }, [timeSeries]);
 
-  // ==========================================================
-  // PIE CHART
-  // ==========================================================
+      // ====================================================
+      // JWT AUTHENTICATED CONNECTION
+      // ====================================================
 
-  const pieTotal =
-    stats.info +
-    stats.warn +
-    stats.error +
-    stats.fatal;
+      connectSocket();
 
-  const infoPercent =
-    pieTotal === 0
-      ? 0
-      : (stats.info /
-          pieTotal) *
-        100;
+      if (
+        socket.connected
+      ) {
+        setConnected(
+          true
+        );
+      }
 
-  const warnPercent =
-    pieTotal === 0
-      ? 0
-      : (stats.warn /
-          pieTotal) *
-        100;
+      // ====================================================
+      // CLEANUP
+      // ====================================================
 
-  const errorPercent =
-    pieTotal === 0
-      ? 0
-      : (stats.error /
-          pieTotal) *
-        100;
+      return () => {
+        socket.off(
+          "connect",
+          handleConnect
+        );
 
-  const pieGradient =
-    pieTotal === 0
-      ? "#27272a"
-      : `conic-gradient(
-          #34d399 0% ${infoPercent}%,
-          #facc15 ${infoPercent}% ${
-            infoPercent +
-            warnPercent
-          }%,
-          #f87171 ${
-            infoPercent +
-            warnPercent
-          }% ${
-            infoPercent +
-            warnPercent +
-            errorPercent
-          }%,
-          #dc2626 ${
-            infoPercent +
-            warnPercent +
-            errorPercent
-          }% 100%
-        )`;
+        socket.off(
+          "disconnect",
+          handleDisconnect
+        );
 
-  // ==========================================================
-  // LEVEL BADGE
-  // ==========================================================
+        socket.off(
+          "connect_error",
+          handleConnectError
+        );
 
-  const getBadgeClass = (
-    level: LogLevel
-  ) => {
-    switch (level) {
-      case "error":
-        return "bg-red-500/10 text-red-400 border-red-500/30";
+        socket.off(
+          "webhook:event",
+          handleWebhookEvent
+        );
+      };
+    },
+    [
+      loadDashboard,
+    ]
+  );
 
-      case "fatal":
-        return "bg-red-700/20 text-red-300 border-red-700/40";
-
-      case "warn":
-        return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
-
-      case "info":
-      default:
-        return "bg-emerald-500/10 text-emerald-400 border-emerald-500/30";
-    }
-  };
-
-  // ==========================================================
-  // CLEAR FILTERS
-  // ==========================================================
-
-  const clearFilters = () => {
-    setSearchTerm("");
-    setSelectedLevel("all");
-    setSelectedProject("all");
-    setTimeRange("7d");
-    setPage(1);
-  };
-
-  const filtersActive =
-    searchTerm.trim() !== "" ||
-    selectedLevel !== "all" ||
-    selectedProject !== "all" ||
-    timeRange !== "7d";
-
-  // ==========================================================
+  // ========================================================
   // UI
-  // ==========================================================
+  // ========================================================
 
   return (
-    <div className="min-h-screen bg-black text-white p-6">
+    <div className="min-h-screen bg-black text-white">
 
-      {/* ======================================================
-          HEADER
-      ====================================================== */}
+      {/* ====================================================
+          TOP HEADER
+      ==================================================== */}
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+      <header className="border-b border-zinc-800 bg-zinc-950/95 backdrop-blur sticky top-0 z-40">
 
-        <div>
-          <h1 className="text-4xl font-bold">
-            🚀 LogPulse Console
-          </h1>
+        <div className="max-w-[1600px] mx-auto px-5 md:px-8 py-4">
 
-          <p className="text-gray-400 mt-2">
-            Real-Time Log Monitoring Dashboard
-          </p>
-        </div>
+          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
 
-        <div
-          className={`px-4 py-2 rounded-lg font-semibold border w-fit ${
-            connected
-              ? "bg-green-500/20 text-green-400 border-green-500/30"
-              : "bg-red-500/20 text-red-400 border-red-500/30"
-          }`}
-        >
-          {connected
-            ? "🟢 LIVE"
-            : "🔴 OFFLINE"}
-        </div>
+            {/* ================================================
+                BRAND
+            ================================================ */}
 
-      </div>
+            <div className="flex items-center gap-3 shrink-0">
 
-      {/* ======================================================
-          ERROR
-      ====================================================== */}
+              <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
 
-      {error && (
-        <div className="mb-6 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400">
-          {error}
-        </div>
-      )}
+                <Zap
+                  size={
+                    23
+                  }
+                  className="text-emerald-400"
+                />
 
-      {/* ======================================================
-          FILTERS
-      ====================================================== */}
+              </div>
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-6">
+              <div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="flex items-center gap-2">
 
-          {/* SEARCH */}
+                  <h1 className="text-xl font-bold text-white">
+                    PulseEngine
+                  </h1>
 
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              Search Logs
-            </label>
+                  <span className="hidden sm:inline-flex px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-500 uppercase tracking-wider">
+                    Console
+                  </span>
 
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(event) =>
-                setSearchTerm(
-                  event.target.value
-                )
-              }
-              placeholder="Search message, project or level..."
-              className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none focus:border-emerald-500"
-            />
-          </div>
+                </div>
 
-          {/* PROJECT */}
+                <p className="text-sm text-zinc-500">
+                  Reliable Webhook Delivery Platform
+                </p>
 
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              Project
-            </label>
+              </div>
 
-            <select
-              value={selectedProject}
-              onChange={(event) => {
-                setSelectedProject(
-                  event.target.value
-                );
-                setPage(1);
-              }}
-              className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
-            >
-              <option value="all">
-                All Projects
-              </option>
+            </div>
 
-              {projects.map(
-                (project) => (
-                  <option
-                    key={project}
-                    value={project}
-                  >
-                    {project}
-                  </option>
-                )
-              )}
-            </select>
-          </div>
+            {/* ================================================
+                CONSOLE NAVIGATION
+            ================================================ */}
 
-          {/* LEVEL */}
+            <nav className="flex items-center gap-1 bg-black border border-zinc-800 rounded-xl p-1 overflow-x-auto">
 
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              Level
-            </label>
+              <ConsoleNavButton
+                label="Dashboard"
+                active={
+                  activeView ===
+                  "dashboard"
+                }
+                onClick={() =>
+                  changeView(
+                    "dashboard"
+                  )
+                }
+              />
 
-            <select
-              value={selectedLevel}
-              onChange={(event) => {
-                setSelectedLevel(
-                  event.target.value as
-                    | LogLevel
-                    | "all"
-                );
-                setPage(1);
-              }}
-              className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
-            >
-              <option value="all">
-                All Levels
-              </option>
+              <ConsoleNavButton
+                label="Projects"
+                active={
+                  activeView ===
+                  "projects"
+                }
+                onClick={() =>
+                  changeView(
+                    "projects"
+                  )
+                }
+              />
 
-              <option value="info">
-                INFO
-              </option>
+              <ConsoleNavButton
+                label="Endpoints"
+                active={
+                  activeView ===
+                  "endpoints"
+                }
+                onClick={() =>
+                  changeView(
+                    "endpoints"
+                  )
+                }
+              />
 
-              <option value="warn">
-                WARN
-              </option>
+            </nav>
 
-              <option value="error">
-                ERROR
-              </option>
+            {/* ================================================
+                USER AREA
+            ================================================ */}
 
-              <option value="fatal">
-                FATAL
-              </option>
-            </select>
-          </div>
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
 
-          {/* TIME RANGE */}
+              {/* REALTIME STATUS */}
 
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              Time Range
-            </label>
+              <div
+                className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium ${
+                  connected
+                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                    : "bg-red-500/10 border-red-500/20 text-red-400"
+                }`}
+              >
 
-            <select
-              value={timeRange}
-              onChange={(event) =>
-                setTimeRange(
-                  event.target.value as
-                    TimeRange
-                )
-              }
-              className="w-full bg-black border border-zinc-700 rounded-lg px-4 py-3 outline-none"
-            >
-              <option value="1h">
-                Last 1 Hour
-              </option>
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    connected
+                      ? "bg-emerald-400 animate-pulse"
+                      : "bg-red-400"
+                  }`}
+                />
 
-              <option value="6h">
-                Last 6 Hours
-              </option>
+                {connected
+                  ? "Live"
+                  : "Offline"}
 
-              <option value="24h">
-                Last 24 Hours
-              </option>
+              </div>
 
-              <option value="7d">
-                Last 7 Days
-              </option>
+              {/* USER */}
 
-              <option value="30d">
-                Last 30 Days
-              </option>
+              <div className="hidden sm:block text-right px-2">
 
-              <option value="all">
-                All Time
-              </option>
-            </select>
-          </div>
+                <p className="text-sm font-medium text-zinc-200">
+                  {user?.name ||
+                    "User"}
+                </p>
 
-        </div>
+                <p className="text-xs text-zinc-600">
+                  {user?.email ||
+                    ""}
+                </p>
 
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-4">
+              </div>
 
-          <div className="text-sm text-gray-500">
-            Showing{" "}
-            <span className="text-white font-semibold">
-              {logs.length}
-            </span>{" "}
-            logs on this page out of{" "}
-            <span className="text-white font-semibold">
-              {totalLogs}
-            </span>{" "}
-            matching logs
-          </div>
+              {/* LOGOUT */}
 
-          <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={
+                  logout
+                }
+                className="px-4 py-2 rounded-lg text-sm bg-zinc-900 border border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white transition"
+              >
+                Logout
+              </button>
 
-            {filtersActive && (
-              <span className="text-sm text-emerald-400">
-                Filters active
-              </span>
-            )}
-
-            <button
-              onClick={
-                clearFilters
-              }
-              disabled={
-                !filtersActive
-              }
-              className={`px-4 py-2 rounded-lg font-semibold ${
-                filtersActive
-                  ? "bg-zinc-800 hover:bg-zinc-700"
-                  : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
-              }`}
-            >
-              Clear Filters
-            </button>
+            </div>
 
           </div>
 
         </div>
 
-      </div>
+      </header>
 
-      {/* ======================================================
-          STATS
-      ====================================================== */}
+      {/* ====================================================
+          DASHBOARD VIEW
+      ==================================================== */}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      {activeView ===
+      "dashboard" ? (
 
-        <StatCard
-          title="Total Logs"
-          value={
-            loadingStats
-              ? "..."
-              : stats.total
-          }
-          valueClass="text-white"
-        />
+        <main className="max-w-[1600px] mx-auto px-5 md:px-8 py-8">
 
-        <StatCard
-          title="Info"
-          value={
-            loadingStats
-              ? "..."
-              : stats.info
-          }
-          valueClass="text-emerald-400"
-        />
+          {/* ==================================================
+              PAGE HEADING
+          ================================================== */}
 
-        <StatCard
-          title="Warnings"
-          value={
-            loadingStats
-              ? "..."
-              : stats.warn
-          }
-          valueClass="text-yellow-400"
-        />
+          <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-5 mb-8">
 
-        <StatCard
-          title="Errors"
-          value={
-            loadingStats
-              ? "..."
-              : stats.error
-          }
-          valueClass="text-red-400"
-        />
+            <div>
 
-        <StatCard
-          title="Fatal"
-          value={
-            loadingStats
-              ? "..."
-              : stats.fatal
-          }
-          valueClass="text-red-300"
-        />
+              <p className="text-emerald-400 text-xs font-semibold tracking-[0.18em] mb-2">
+                DELIVERY OVERVIEW
+              </p>
 
-      </div>
+              <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
+                Webhook Monitoring
+              </h2>
 
-      {/* ======================================================
-          LOGS OVER TIME
-      ====================================================== */}
+              <p className="text-zinc-500 mt-2 max-w-2xl">
+                Monitor webhook delivery health, retry activity,
+                response latency and execution status in real time.
+              </p>
 
-      <div className="mb-8">
+            </div>
 
-        {loadingTimeSeries ? (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 h-[440px] flex items-center justify-center text-gray-500">
-            Loading time-series data...
+            {/* ================================================
+                RANGE + REFRESH
+            ================================================ */}
+
+            <div className="flex flex-wrap items-center gap-3">
+
+              <select
+                value={
+                  timeRange
+                }
+                onChange={(
+                  event
+                ) => {
+                  setTimeRange(
+                    event.target
+                      .value as EventTimeRange
+                  );
+                }}
+                className="h-11 bg-zinc-950 border border-zinc-700 rounded-lg px-4 text-sm text-zinc-300 outline-none focus:border-emerald-500 transition"
+              >
+
+                <option value="1h">
+                  Last 1 Hour
+                </option>
+
+                <option value="6h">
+                  Last 6 Hours
+                </option>
+
+                <option value="24h">
+                  Last 24 Hours
+                </option>
+
+                <option value="7d">
+                  Last 7 Days
+                </option>
+
+                <option value="30d">
+                  Last 30 Days
+                </option>
+
+                <option value="all">
+                  All Time
+                </option>
+
+              </select>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadDashboard(
+                    true
+                  )
+                }
+                disabled={
+                  refreshing
+                }
+                className="h-11 px-4 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-60 transition flex items-center gap-2 text-sm"
+              >
+
+                <RefreshCw
+                  size={
+                    16
+                  }
+                  className={
+                    refreshing
+                      ? "animate-spin"
+                      : ""
+                  }
+                />
+
+                {refreshing
+                  ? "Refreshing"
+                  : "Refresh"}
+
+              </button>
+
+            </div>
+
           </div>
-        ) : (
-          <LogsOverTimeChart
-            data={chartData}
-          />
-        )}
 
-      </div>
+          {/* ==================================================
+              ERROR
+          ================================================== */}
 
-      {/* ======================================================
-          ANALYTICS
-      ====================================================== */}
+          {error && (
+            <div className="mb-6 px-5 py-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400">
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+              <div className="flex items-center gap-3">
 
-        {/* LEVEL DISTRIBUTION */}
+                <XCircle
+                  size={
+                    19
+                  }
+                />
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-
-          <h2 className="text-2xl font-semibold">
-            Level Distribution
-          </h2>
-
-          <p className="text-gray-400 mt-1">
-            Logs by severity
-          </p>
-
-          <div className="flex flex-col items-center mt-5">
-
-            <div
-              className="w-52 h-52 rounded-full flex items-center justify-center"
-              style={{
-                background:
-                  pieGradient,
-              }}
-            >
-              <div className="w-28 h-28 rounded-full bg-zinc-900 flex flex-col items-center justify-center">
-
-                <span className="text-2xl font-bold">
-                  {loadingStats
-                    ? "..."
-                    : pieTotal}
-                </span>
-
-                <span className="text-xs text-gray-500">
-                  Total
+                <span>
+                  {error}
                 </span>
 
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 mt-6 text-sm">
-
-              <LegendItem
-                label="Info"
-                value={stats.info}
-                dotClass="bg-emerald-400"
-              />
-
-              <LegendItem
-                label="Warning"
-                value={stats.warn}
-                dotClass="bg-yellow-400"
-              />
-
-              <LegendItem
-                label="Error"
-                value={stats.error}
-                dotClass="bg-red-400"
-              />
-
-              <LegendItem
-                label="Fatal"
-                value={stats.fatal}
-                dotClass="bg-red-600"
-              />
 
             </div>
+          )}
+
+          {/* ==================================================
+              MAIN METRIC CARDS
+          ================================================== */}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">
+
+            <MetricCard
+              title="Total Deliveries"
+              value={
+                loading
+                  ? "..."
+                  : stats.total
+              }
+              subtitle="Webhook events"
+              icon={
+                <Webhook
+                  size={
+                    21
+                  }
+                />
+              }
+              iconClass="text-violet-400"
+            />
+
+            <MetricCard
+              title="Successful"
+              value={
+                loading
+                  ? "..."
+                  : stats.successful
+              }
+              subtitle={`${stats.completedDeliveries} completed`}
+              icon={
+                <CheckCircle2
+                  size={
+                    21
+                  }
+                />
+              }
+              iconClass="text-emerald-400"
+            />
+
+            <MetricCard
+              title="Failed"
+              value={
+                loading
+                  ? "..."
+                  : stats.failed
+              }
+              subtitle={`${stats.retrying} currently retrying`}
+              icon={
+                <XCircle
+                  size={
+                    21
+                  }
+                />
+              }
+              iconClass="text-red-400"
+            />
+
+            <MetricCard
+              title="Success Rate"
+              value={
+                loading
+                  ? "..."
+                  : `${stats.successRate.toFixed(
+                      2
+                    )}%`
+              }
+              subtitle={`${stats.failureRate.toFixed(
+                2
+              )}% failure rate`}
+              icon={
+                <Activity
+                  size={
+                    21
+                  }
+                />
+              }
+              iconClass="text-cyan-400"
+            />
+
+            <MetricCard
+              title="Avg Latency"
+              value={
+                loading
+                  ? "..."
+                  : `${stats.averageLatencyMs.toFixed(
+                      2
+                    )} ms`
+              }
+              subtitle="Latest response latency"
+              icon={
+                <Clock3
+                  size={
+                    21
+                  }
+                />
+              }
+              iconClass="text-amber-400"
+            />
 
           </div>
 
-        </div>
+          {/* ==================================================
+              DELIVERY PERFORMANCE CHART
+          ================================================== */}
 
-        {/* ERROR RATE */}
+          <section className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 md:p-6 mb-8">
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 flex flex-col">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
 
-          <h2 className="text-2xl font-semibold">
-            Error Rate
-          </h2>
+              <div>
 
-          <p className="text-gray-400 mt-1">
-            Errors + Fatal logs
-          </p>
+                <h3 className="text-lg font-semibold text-zinc-100">
+                  Delivery Performance
+                </h3>
 
-          <div className="flex-1 flex flex-col items-center justify-center">
+                <p className="text-sm text-zinc-500 mt-1">
+                  Successful, failed and retrying webhook deliveries
+                </p>
 
-            <div className="text-7xl font-bold text-red-400">
-              {loadingStats
-                ? "..."
-                : `${stats.errorRate.toFixed(
-                    1
-                  )}%`}
+              </div>
+
+              <div className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-500">
+                Range: {timeRange}
+              </div>
+
             </div>
 
-            <p className="text-gray-400 mt-4">
-              serious logs
-            </p>
+            {loading ? (
+              <div className="h-[380px] flex items-center justify-center text-zinc-600">
+                Loading delivery analytics...
+              </div>
+            ) : timeSeries.length ===
+              0 ? (
+              <div className="h-[380px] flex flex-col items-center justify-center text-zinc-600">
 
-            {!loadingStats && (
-              <p className="text-sm text-gray-600 mt-2">
-                {stats.error +
-                  stats.fatal}{" "}
-                out of{" "}
-                {stats.total}
-              </p>
+                <Activity
+                  size={
+                    38
+                  }
+                  className="mb-3 opacity-50"
+                />
+
+                <p>
+                  No delivery analytics available
+                </p>
+
+              </div>
+            ) : (
+              <div className="h-[380px]">
+
+                <ResponsiveContainer
+                  width="100%"
+                  height="100%"
+                >
+
+                  <LineChart
+                    data={
+                      timeSeries
+                    }
+                    margin={{
+                      top:
+                        10,
+
+                      right:
+                        20,
+
+                      left:
+                        -10,
+
+                      bottom:
+                        0,
+                    }}
+                  >
+
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="#27272a"
+                      vertical={
+                        false
+                      }
+                    />
+
+                    <XAxis
+                      dataKey="label"
+                      stroke="#71717a"
+                      tickLine={
+                        false
+                      }
+                      axisLine={{
+                        stroke:
+                          "#27272a",
+                      }}
+                      tick={{
+                        fontSize:
+                          11,
+                      }}
+                    />
+
+                    <YAxis
+                      allowDecimals={
+                        false
+                      }
+                      stroke="#71717a"
+                      tickLine={
+                        false
+                      }
+                      axisLine={
+                        false
+                      }
+                      tick={{
+                        fontSize:
+                          11,
+                      }}
+                    />
+
+                    <Tooltip
+                      cursor={{
+                        stroke:
+                          "#52525b",
+
+                        strokeDasharray:
+                          "4 4",
+                      }}
+                      contentStyle={{
+                        background:
+                          "#18181b",
+
+                        border:
+                          "1px solid #3f3f46",
+
+                        borderRadius:
+                          "10px",
+
+                        color:
+                          "#f4f4f5",
+
+                        boxShadow:
+                          "0 10px 30px rgba(0,0,0,0.35)",
+                      }}
+                      labelStyle={{
+                        color:
+                          "#a1a1aa",
+
+                        marginBottom:
+                          "6px",
+                      }}
+                    />
+
+                    <Legend
+                      wrapperStyle={{
+                        fontSize:
+                          "12px",
+
+                        paddingTop:
+                          "18px",
+                      }}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="successful"
+                      name="Successful"
+                      stroke="#34d399"
+                      strokeWidth={
+                        2.5
+                      }
+                      dot={
+                        false
+                      }
+                      activeDot={{
+                        r:
+                          5,
+                      }}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="failed"
+                      name="Failed"
+                      stroke="#f87171"
+                      strokeWidth={
+                        2.5
+                      }
+                      dot={
+                        false
+                      }
+                      activeDot={{
+                        r:
+                          5,
+                      }}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="retrying"
+                      name="Retrying"
+                      stroke="#fbbf24"
+                      strokeWidth={
+                        2
+                      }
+                      dot={
+                        false
+                      }
+                    />
+
+                  </LineChart>
+
+                </ResponsiveContainer>
+
+              </div>
             )}
 
+          </section>
+
+          {/* ==================================================
+              ANALYTICS GRID
+          ================================================== */}
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
+
+            {/* ================================================
+                DELIVERY HEALTH
+            ================================================ */}
+
+            <section className="bg-zinc-950 border border-zinc-800 rounded-2xl p-6">
+
+              <div className="mb-6">
+
+                <h3 className="text-lg font-semibold">
+                  Delivery Health
+                </h3>
+
+                <p className="text-sm text-zinc-500 mt-1">
+                  Current webhook lifecycle status
+                </p>
+
+              </div>
+
+              <div className="space-y-5">
+
+                <HealthRow
+                  label="Queued"
+                  value={
+                    stats.queued
+                  }
+                  valueClass="text-blue-400"
+                />
+
+                <HealthRow
+                  label="Processing"
+                  value={
+                    stats.processing
+                  }
+                  valueClass="text-indigo-400"
+                />
+
+                <HealthRow
+                  label="Retrying"
+                  value={
+                    stats.retrying
+                  }
+                  valueClass="text-amber-400"
+                />
+
+                <div className="border-t border-zinc-800" />
+
+                <HealthRow
+                  label="Successful"
+                  value={
+                    stats.successful
+                  }
+                  valueClass="text-emerald-400"
+                />
+
+                <HealthRow
+                  label="Failed"
+                  value={
+                    stats.failed
+                  }
+                  valueClass="text-red-400"
+                />
+
+              </div>
+
+            </section>
+
+            {/* ================================================
+                ENGINE STATUS
+            ================================================ */}
+
+            <section className="bg-zinc-950 border border-zinc-800 rounded-2xl p-6">
+
+              <div className="mb-6">
+
+                <h3 className="text-lg font-semibold">
+                  Engine Status
+                </h3>
+
+                <p className="text-sm text-zinc-500 mt-1">
+                  PulseEngine runtime connectivity
+                </p>
+
+              </div>
+
+              <div className="space-y-5">
+
+                <SystemRow
+                  icon={
+                    <Server
+                      size={
+                        18
+                      }
+                    />
+                  }
+                  label="API Server"
+                  value="Connected"
+                  valueClass="text-emerald-400"
+                />
+
+                <SystemRow
+                  icon={
+                    <Activity
+                      size={
+                        18
+                      }
+                    />
+                  }
+                  label="Realtime Socket"
+                  value={
+                    connected
+                      ? "Connected"
+                      : "Disconnected"
+                  }
+                  valueClass={
+                    connected
+                      ? "text-emerald-400"
+                      : "text-red-400"
+                  }
+                />
+
+                <SystemRow
+                  icon={
+                    <Zap
+                      size={
+                        18
+                      }
+                    />
+                  }
+                  label="Delivery Engine"
+                  value="Active"
+                  valueClass="text-emerald-400"
+                />
+
+                <SystemRow
+                  icon={
+                    <Webhook
+                      size={
+                        18
+                      }
+                    />
+                  }
+                  label="Webhook Queue"
+                  value="Operational"
+                  valueClass="text-emerald-400"
+                />
+
+              </div>
+
+              <div className="mt-7 pt-5 border-t border-zinc-800">
+
+                <p className="text-[11px] uppercase tracking-widest text-zinc-600 mb-2">
+                  API Endpoint
+                </p>
+
+                <p className="text-sm text-zinc-400 break-all font-mono">
+                  {API_URL}
+                </p>
+
+              </div>
+
+            </section>
+
+            {/* ================================================
+                PERFORMANCE
+            ================================================ */}
+
+            <section className="bg-zinc-950 border border-zinc-800 rounded-2xl p-6">
+
+              <div className="mb-6">
+
+                <h3 className="text-lg font-semibold">
+                  Performance
+                </h3>
+
+                <p className="text-sm text-zinc-500 mt-1">
+                  Delivery reliability metrics
+                </p>
+
+              </div>
+
+              {/* SUCCESS RATE */}
+
+              <div className="mb-7">
+
+                <div className="flex items-center justify-between mb-2">
+
+                  <span className="text-sm text-zinc-400">
+                    Success Rate
+                  </span>
+
+                  <span className="font-semibold text-emerald-400">
+
+                    {stats.successRate.toFixed(
+                      2
+                    )}
+                    %
+
+                  </span>
+
+                </div>
+
+                <div className="h-2.5 bg-zinc-800 rounded-full overflow-hidden">
+
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                    style={{
+                      width:
+                        `${Math.max(
+                          0,
+                          Math.min(
+                            stats.successRate,
+                            100
+                          )
+                        )}%`,
+                    }}
+                  />
+
+                </div>
+
+              </div>
+
+              {/* BOXES */}
+
+              <div className="grid grid-cols-2 gap-4">
+
+                <PerformanceBox
+                  label="Completed"
+                  value={
+                    stats.completedDeliveries
+                  }
+                />
+
+                <PerformanceBox
+                  label="Avg Latency"
+                  value={`${Math.round(
+                    stats.averageLatencyMs
+                  )} ms`}
+                />
+
+                <PerformanceBox
+                  label="Failure Rate"
+                  value={`${stats.failureRate.toFixed(
+                    1
+                  )}%`}
+                  valueClass="text-red-400"
+                />
+
+                <PerformanceBox
+                  label="In Progress"
+                  value={
+                    stats.queued +
+                    stats.processing +
+                    stats.retrying
+                  }
+                  valueClass="text-amber-400"
+                />
+
+              </div>
+
+            </section>
+
           </div>
 
-        </div>
+          {/* ==================================================
+              RECENT WEBHOOK EVENTS
+          ================================================== */}
 
-        {/* PROJECT ACTIVITY */}
+          <section className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden">
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            {/* TABLE TITLE */}
 
-          <h2 className="text-2xl font-semibold">
-            Project Activity
-          </h2>
+            <div className="px-5 md:px-6 py-5 border-b border-zinc-800">
 
-          <p className="text-gray-400 mt-1 mb-5">
-            Most active projects
-          </p>
+              <div className="flex items-center justify-between gap-4">
 
-          {loadingProjectStats ? (
-            <div className="h-64 flex items-center justify-center text-gray-500">
-              Loading project activity...
+                <div>
+
+                  <h3 className="text-lg font-semibold">
+                    Recent Webhook Deliveries
+                  </h3>
+
+                  <p className="text-sm text-zinc-500 mt-1">
+                    Click any delivery to inspect its payload,
+                    response and attempt history.
+                  </p>
+
+                </div>
+
+                <div className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-500">
+
+                  <Webhook
+                    size={
+                      19
+                    }
+                  />
+
+                </div>
+
+              </div>
+
             </div>
-          ) : projectStats.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-gray-500">
-              No project activity
+
+            {/* TABLE HEADER */}
+
+            <div className="hidden lg:grid grid-cols-12 gap-4 px-6 py-3 bg-zinc-900/70 text-[11px] uppercase tracking-wider font-semibold text-zinc-500">
+
+              <div className="col-span-3">
+                Event ID
+              </div>
+
+              <div className="col-span-2">
+                Project
+              </div>
+
+              <div className="col-span-2">
+                Status
+              </div>
+
+              <div className="col-span-1">
+                HTTP
+              </div>
+
+              <div className="col-span-1 text-center">
+                Attempts
+              </div>
+
+              <div className="col-span-1">
+                Latency
+              </div>
+
+              <div className="col-span-2">
+                Created
+              </div>
+
             </div>
-          ) : (
-            <div className="space-y-4">
 
-              {projectStats.map(
-                (item) => {
-                  const percentage =
-                    (item.count /
-                      maxProjectCount) *
-                    100;
+            {/* TABLE BODY */}
 
-                  return (
+            {loading ? (
+              <div className="p-12 text-center text-zinc-600">
+
+                <RefreshCw
+                  size={
+                    25
+                  }
+                  className="animate-spin mx-auto mb-3"
+                />
+
+                Loading recent deliveries...
+
+              </div>
+            ) : events.length ===
+              0 ? (
+              <div className="p-12 text-center">
+
+                <Webhook
+                  size={
+                    38
+                  }
+                  className="mx-auto text-zinc-700 mb-4"
+                />
+
+                <p className="text-zinc-400 font-medium">
+                  No webhook deliveries found
+                </p>
+
+                <p className="text-sm text-zinc-600 mt-1">
+                  Dispatch a webhook event and it will appear here.
+                </p>
+
+              </div>
+            ) : (
+              <div>
+
+                {events.map(
+                  (
+                    event
+                  ) => (
                     <div
                       key={
-                        item.projectId
+                        event.eventId
                       }
+                      role="button"
+                      tabIndex={
+                        0
+                      }
+                      onClick={() =>
+                        setSelectedEventId(
+                          event.eventId
+                        )
+                      }
+                      onKeyDown={(
+                        keyboardEvent
+                      ) => {
+                        if (
+                          keyboardEvent.key ===
+                            "Enter" ||
+                          keyboardEvent.key ===
+                            " "
+                        ) {
+                          keyboardEvent.preventDefault();
+
+                          setSelectedEventId(
+                            event.eventId
+                          );
+                        }
+                      }}
+                      className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 px-5 md:px-6 py-4 border-t border-zinc-800/80 hover:bg-zinc-900/70 focus:bg-zinc-900/70 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-emerald-500/40 transition cursor-pointer"
                     >
 
-                      <div className="flex justify-between gap-3 mb-1">
+                      {/* EVENT */}
 
-                        <span
-                          className="text-sm text-gray-300 truncate"
+                      <div className="lg:col-span-3 min-w-0">
+
+                        <p className="lg:hidden text-[11px] uppercase tracking-wide text-zinc-600 mb-1">
+                          Event
+                        </p>
+
+                        <p
+                          className="font-mono text-sm text-zinc-300 truncate"
                           title={
-                            item.projectId
+                            event.eventId
                           }
                         >
-                          {item.projectId}
-                        </span>
+                          {event.eventId}
+                        </p>
 
-                        <span className="text-sm text-gray-500">
-                          {item.count}
-                        </span>
+                        {event.redeliveryOf && (
+                          <div className="mt-1">
+
+                            <span className="inline-flex px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 text-[10px] border border-indigo-500/20 uppercase font-semibold">
+                              Redelivery
+                            </span>
+
+                          </div>
+                        )}
 
                       </div>
 
-                      <div className="w-full h-3 bg-zinc-800 rounded-full overflow-hidden">
+                      {/* PROJECT */}
 
-                        <div
-                          className="h-full rounded-full bg-indigo-400 transition-all duration-500"
-                          style={{
-                            width: `${percentage}%`,
-                          }}
+                      <div className="lg:col-span-2 min-w-0">
+
+                        <p className="lg:hidden text-[11px] uppercase tracking-wide text-zinc-600 mb-1">
+                          Project
+                        </p>
+
+                        <p
+                          className="text-sm text-zinc-300 truncate"
+                          title={
+                            event.projectId
+                          }
+                        >
+                          {event.projectId}
+                        </p>
+
+                      </div>
+
+                      {/* STATUS */}
+
+                      <div className="lg:col-span-2">
+
+                        <p className="lg:hidden text-[11px] uppercase tracking-wide text-zinc-600 mb-1">
+                          Status
+                        </p>
+
+                        <StatusBadge
+                          status={
+                            event.status
+                          }
                         />
 
                       </div>
 
-                    </div>
-                  );
-                }
-              )}
+                      {/* HTTP */}
 
-            </div>
-          )}
+                      <div className="lg:col-span-1">
 
-        </div>
+                        <p className="lg:hidden text-[11px] uppercase tracking-wide text-zinc-600 mb-1">
+                          HTTP
+                        </p>
 
-      </div>
+                        <span
+                          className={`font-mono text-sm ${
+                            event.responseStatus !==
+                              null &&
+                            event.responseStatus >=
+                              200 &&
+                            event.responseStatus <
+                              300
+                              ? "text-emerald-400"
+                              : event.responseStatus !==
+                                  null
+                                ? "text-red-400"
+                                : "text-zinc-600"
+                          }`}
+                        >
+                          {event.responseStatus ??
+                            "—"}
+                        </span>
 
-      {/* ======================================================
-          STATUS
-      ====================================================== */}
+                      </div>
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-8">
+                      {/* ATTEMPTS */}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="lg:col-span-1 lg:text-center">
 
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">
-              Backend
-            </p>
+                        <p className="lg:hidden text-[11px] uppercase tracking-wide text-zinc-600 mb-1">
+                          Attempts
+                        </p>
 
-            <p className="text-sm text-gray-300 mt-1 break-all">
-              {API_URL}
-            </p>
-          </div>
+                        <span className="text-sm text-zinc-300">
+                          {event.attemptCount}
+                        </span>
 
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">
-              Socket
-            </p>
+                      </div>
 
-            <p
-              className={`mt-1 font-semibold ${
-                connected
-                  ? "text-emerald-400"
-                  : "text-red-400"
-              }`}
-            >
-              {connected
-                ? "Connected"
-                : "Disconnected"}
-            </p>
-          </div>
+                      {/* LATENCY */}
 
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">
-              Current Page
-            </p>
+                      <div className="lg:col-span-1">
 
-            <p className="text-sm text-gray-300 mt-1">
-              {logs.length} records
-            </p>
-          </div>
+                        <p className="lg:hidden text-[11px] uppercase tracking-wide text-zinc-600 mb-1">
+                          Latency
+                        </p>
 
-        </div>
+                        <span className="text-sm text-zinc-400">
 
-      </div>
+                          {event.latencyMs !==
+                          null
+                            ? `${event.latencyMs}ms`
+                            : "—"}
 
-      {/* ======================================================
-          LOG TABLE
-      ====================================================== */}
+                        </span>
 
-      <div className="rounded-xl overflow-hidden border border-zinc-800">
+                      </div>
 
-        <div className="hidden md:grid grid-cols-12 gap-4 bg-zinc-900 p-4 font-semibold text-gray-300">
+                      {/* CREATED */}
 
-          <div className="col-span-2">
-            Timestamp
-          </div>
+                      <div className="lg:col-span-2">
 
-          <div className="col-span-2">
-            Project
-          </div>
+                        <p className="lg:hidden text-[11px] uppercase tracking-wide text-zinc-600 mb-1">
+                          Created
+                        </p>
 
-          <div className="col-span-1">
-            Level
-          </div>
+                        <span className="text-xs text-zinc-500">
 
-          <div className="col-span-7">
-            Message
-          </div>
+                          {new Date(
+                            event.createdAt
+                          ).toLocaleString()}
 
-        </div>
+                        </span>
 
-        <div className="max-h-[650px] overflow-y-auto">
-
-          {loadingLogs ? (
-            <div className="p-10 text-center text-gray-500">
-              Loading logs...
-            </div>
-          ) : logs.length === 0 ? (
-            <div className="p-10 text-center text-gray-500">
-              No logs found.
-            </div>
-          ) : (
-            logs.map(
-              (log, index) => {
-                const logId =
-                  log._id ||
-                  `${log.timestamp}-${log.projectId}-${index}`;
-
-                return (
-                  <div
-                    key={logId}
-                    onClick={() =>
-                      setSelectedLog(
-                        log
-                      )
-                    }
-                    className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 p-4 border-t border-zinc-800 hover:bg-zinc-900/50 transition cursor-pointer"
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (
-                        event.key ===
-                          "Enter" ||
-                        event.key ===
-                          " "
-                      ) {
-                        setSelectedLog(
-                          log
-                        );
-                      }
-                    }}
-                  >
-
-                    <div className="md:col-span-2">
-
-                      <p className="md:hidden text-xs text-gray-600 mb-1">
-                        Timestamp
-                      </p>
-
-                      <div className="text-sm text-gray-400">
-                        {new Date(
-                          log.timestamp
-                        ).toLocaleString()}
                       </div>
 
                     </div>
-
-                    <div className="md:col-span-2">
-
-                      <p className="md:hidden text-xs text-gray-600 mb-1">
-                        Project
-                      </p>
-
-                      <div
-                        className="font-medium truncate"
-                        title={
-                          log.projectId
-                        }
-                      >
-                        {log.projectId}
-                      </div>
-
-                    </div>
-
-                    <div className="md:col-span-1">
-
-                      <p className="md:hidden text-xs text-gray-600 mb-1">
-                        Level
-                      </p>
-
-                      <span
-                        className={`inline-block px-3 py-1 rounded-md border text-xs font-bold uppercase ${getBadgeClass(
-                          log.level
-                        )}`}
-                      >
-                        {log.level}
-                      </span>
-
-                    </div>
-
-                    <div className="md:col-span-7">
-
-                      <p className="md:hidden text-xs text-gray-600 mb-1">
-                        Message
-                      </p>
-
-                      <div
-                        className="truncate"
-                        title={
-                          log.message
-                        }
-                      >
-                        {log.message}
-                      </div>
-
-                    </div>
-
-                  </div>
-                );
-              }
-            )
-          )}
-
-        </div>
-
-      </div>
-
-      {/* ======================================================
-          PAGINATION
-      ====================================================== */}
-
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-6">
-
-        <div className="text-sm text-gray-500">
-          Page{" "}
-          <span className="text-white font-semibold">
-            {page}
-          </span>{" "}
-          of{" "}
-          <span className="text-white font-semibold">
-            {totalPages}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3">
-
-          <button
-            onClick={() =>
-              setPage(
-                (current) =>
-                  Math.max(
-                    current - 1,
-                    1
                   )
-              )
-            }
-            disabled={
-              !hasPreviousPage ||
-              loadingLogs
-            }
-            className={`px-4 py-2 rounded-lg font-semibold ${
-              hasPreviousPage &&
-              !loadingLogs
-                ? "bg-zinc-800 hover:bg-zinc-700 text-white"
-                : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
-            }`}
-          >
-            ← Previous
-          </button>
+                )}
 
-          <button
-            onClick={() =>
-              setPage(
-                (current) =>
-                  current + 1
-              )
-            }
-            disabled={
-              !hasNextPage ||
-              loadingLogs
-            }
-            className={`px-4 py-2 rounded-lg font-semibold ${
-              hasNextPage &&
-              !loadingLogs
-                ? "bg-zinc-800 hover:bg-zinc-700 text-white"
-                : "bg-zinc-950 border border-zinc-800 text-zinc-600 cursor-not-allowed"
-            }`}
-          >
-            Next →
-          </button>
+              </div>
+            )}
 
-        </div>
+          </section>
 
-      </div>
+          {/* ==================================================
+              FOOTER
+          ================================================== */}
 
-      {/* ======================================================
-          LOG DETAILS MODAL
-      ====================================================== */}
+          <footer className="text-center py-10">
 
-      <LogDetailsModal
-        log={selectedLog}
-        onClose={() =>
-          setSelectedLog(null)
-        }
-      />
+            <p className="text-sm text-zinc-700">
+              PulseEngine • Reliable Asynchronous Webhook Delivery
+            </p>
 
-      {/* FOOTER */}
+          </footer>
 
-      <div className="text-center text-gray-600 text-sm py-8">
-        LogPulse • Real-Time Distributed Log Monitoring
-      </div>
+        </main>
+
+      ) : activeView ===
+        "projects" ? (
+
+        /* ====================================================
+            PROJECTS VIEW
+        ==================================================== */
+
+        <main className="max-w-[1600px] mx-auto px-5 md:px-8 py-8">
+
+          <ProjectManager
+            onProjectsChanged={() => {
+              void loadDashboard(
+                true
+              );
+            }}
+          />
+
+        </main>
+
+      ) : (
+
+        /* ====================================================
+            ENDPOINTS VIEW
+        ==================================================== */
+
+        <main className="max-w-[1600px] mx-auto px-5 md:px-8 py-8">
+
+          <EndpointManager
+            onEndpointsChanged={() => {
+              void loadDashboard(
+                true
+              );
+            }}
+          />
+
+        </main>
+
+      )}
+
+      {/* ====================================================
+          WEBHOOK EVENT DETAILS / PAYLOAD INSPECTOR
+      ==================================================== */}
+
+      {activeView ===
+        "dashboard" && (
+        <WebhookEventDetailsModal
+          eventId={
+            selectedEventId
+          }
+          onClose={() =>
+            setSelectedEventId(
+              null
+            )
+          }
+          onRedelivered={() =>
+            void loadDashboard(
+              true
+            )
+          }
+        />
+      )}
 
     </div>
   );
 }
 
-// ============================================================
-// STAT CARD
-// ============================================================
+// ==========================================================
+// CONSOLE NAV BUTTON
+// ==========================================================
 
-interface StatCardProps {
-  title: string;
-  value: number | string;
-  valueClass: string;
+interface ConsoleNavButtonProps {
+  label:
+    string;
+
+  active:
+    boolean;
+
+  onClick:
+    () => void;
 }
 
-function StatCard({
+function ConsoleNavButton({
+  label,
+  active,
+  onClick,
+}: ConsoleNavButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={
+        onClick
+      }
+      className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition ${
+        active
+          ? "bg-zinc-800 text-white shadow-sm"
+          : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ==========================================================
+// METRIC CARD
+// ==========================================================
+
+interface MetricCardProps {
+  title:
+    string;
+
+  value:
+    string | number;
+
+  subtitle:
+    string;
+
+  icon:
+    ReactNode;
+
+  iconClass:
+    string;
+}
+
+function MetricCard({
   title,
   value,
-  valueClass,
-}: StatCardProps) {
+  subtitle,
+  icon,
+  iconClass,
+}: MetricCardProps) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+    <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 hover:border-zinc-700 transition">
 
-      <p className="text-gray-400 text-sm">
-        {title}
+      <div className="flex items-start justify-between gap-4">
+
+        <div className="min-w-0">
+
+          <p className="text-sm text-zinc-500">
+            {title}
+          </p>
+
+          <p className="text-3xl font-bold tracking-tight mt-2 truncate">
+            {value}
+          </p>
+
+        </div>
+
+        <div
+          className={`shrink-0 w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center ${iconClass}`}
+        >
+          {icon}
+        </div>
+
+      </div>
+
+      <p className="text-xs text-zinc-600 mt-4 truncate">
+        {subtitle}
       </p>
-
-      <h2
-        className={`text-3xl font-bold mt-2 ${valueClass}`}
-      >
-        {value}
-      </h2>
 
     </div>
   );
 }
 
-// ============================================================
-// LEGEND
-// ============================================================
+// ==========================================================
+// HEALTH ROW
+// ==========================================================
 
-interface LegendItemProps {
-  label: string;
-  value: number;
-  dotClass: string;
+interface HealthRowProps {
+  label:
+    string;
+
+  value:
+    number;
+
+  valueClass:
+    string;
 }
 
-function LegendItem({
+function HealthRow({
   label,
   value,
-  dotClass,
-}: LegendItemProps) {
+  valueClass,
+}: HealthRowProps) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center justify-between gap-3">
+
+      <span className="text-sm text-zinc-400">
+        {label}
+      </span>
 
       <span
-        className={`w-3 h-3 rounded-full ${dotClass}`}
-      />
-
-      <span>
-        {label} ({value})
+        className={`font-semibold ${valueClass}`}
+      >
+        {value}
       </span>
 
     </div>
+  );
+}
+
+// ==========================================================
+// SYSTEM ROW
+// ==========================================================
+
+interface SystemRowProps {
+  icon:
+    ReactNode;
+
+  label:
+    string;
+
+  value:
+    string;
+
+  valueClass:
+    string;
+}
+
+function SystemRow({
+  icon,
+  label,
+  value,
+  valueClass,
+}: SystemRowProps) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+
+      <div className="flex items-center gap-3 min-w-0">
+
+        <div className="text-zinc-600 shrink-0">
+          {icon}
+        </div>
+
+        <span className="text-sm text-zinc-400 truncate">
+          {label}
+        </span>
+
+      </div>
+
+      <span
+        className={`text-sm font-medium shrink-0 ${valueClass}`}
+      >
+        {value}
+      </span>
+
+    </div>
+  );
+}
+
+// ==========================================================
+// PERFORMANCE BOX
+// ==========================================================
+
+interface PerformanceBoxProps {
+  label:
+    string;
+
+  value:
+    string | number;
+
+  valueClass?:
+    string;
+}
+
+function PerformanceBox({
+  label,
+  value,
+  valueClass =
+    "text-white",
+}: PerformanceBoxProps) {
+  return (
+    <div className="bg-black border border-zinc-800 rounded-xl p-4">
+
+      <p className="text-xs text-zinc-500">
+        {label}
+      </p>
+
+      <p
+        className={`text-2xl font-bold mt-2 ${valueClass}`}
+      >
+        {value}
+      </p>
+
+    </div>
+  );
+}
+
+// ==========================================================
+// STATUS BADGE
+// ==========================================================
+
+function StatusBadge({
+  status,
+}: {
+  status:
+    WebhookEventStatus;
+}) {
+  const classes:
+    Record<
+      WebhookEventStatus,
+      string
+    > = {
+      queued:
+        "bg-blue-500/10 text-blue-400 border-blue-500/20",
+
+      processing:
+        "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+
+      retrying:
+        "bg-amber-500/10 text-amber-400 border-amber-500/20",
+
+      success:
+        "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+
+      failed:
+        "bg-red-500/10 text-red-400 border-red-500/20",
+    };
+
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-md border text-[11px] font-semibold uppercase tracking-wide ${classes[status]}`}
+    >
+      {status}
+    </span>
   );
 }
