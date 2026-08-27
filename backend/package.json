@@ -4,17 +4,26 @@
   "description": "PulseEngine - Reliable Real-Time Webhook Delivery and Monitoring Platform",
   "main": "dist/server.js",
   "type": "commonjs",
+
   "scripts": {
     "dev:server": "tsx watch src/server.ts",
     "dev:worker": "tsx watch src/workers/webhookWorker.ts",
+
     "build": "tsc",
+
     "start": "node dist/server.js",
+
     "start:worker": "node dist/workers/webhookWorker.js",
-    "worker": "node dist/workers/webhookWorker.js"
+
+    "worker": "node dist/workers/webhookWorker.js",
+
+    "start:render": "concurrently --kill-others-on-fail -n API,WORKER \"node dist/server.js\" \"node dist/workers/webhookWorker.js\""
   },
+
   "engines": {
     "node": ">=22 <23"
   },
+
   "keywords": [
     "webhooks",
     "bullmq",
@@ -24,12 +33,15 @@
     "monitoring",
     "typescript"
   ],
+
   "author": "Bhupender Singh",
   "license": "ISC",
+
   "dependencies": {
     "axios": "^1.19.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^6.2.2",
+    "concurrently": "^10.0.5",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -41,6 +53,7 @@
     "socket.io": "^4.8.3",
     "zod": "^4.4.3"
   },
+
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
