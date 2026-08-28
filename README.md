@@ -1,56 +1,113 @@
-# LogPulse ⚡ — High-Throughput Distributed Log Ingestion Pipeline
+# PulseEngine
 
-LogPulse is an asynchronous, high-throughput log ingestion engine built with **Node.js, Express, Redis Streams, MongoDB Time-Series, and React**.
+> A real-time asynchronous webhook delivery and monitoring platform built with TypeScript, Node.js, Redis, BullMQ, MongoDB Atlas, Socket.IO, and React.
 
-Traditional API architectures fail under log bursts because every HTTP request triggers a synchronous, blocking database write. LogPulse solves this by decoupling ingestion from storage using Redis Streams as an in-memory buffer, achieving sub-2ms response times.
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel-000000?style=flat-square&logo=vercel)](https://logpulse-3dgx.vercel.app/)
+[![Backend API](https://img.shields.io/badge/Backend-Render-46E3B7?style=flat-square&logo=render)](https://pulseengine-api.onrender.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 
----
+**Live Application:** https://logpulse-3dgx.vercel.app/  
+**Backend API:** https://pulseengine-api.onrender.com
 
-## 🏗 Architecture & System Design
+## Overview
+
+PulseEngine is a webhook delivery and monitoring platform designed to process outgoing webhook events asynchronously.
+
+Instead of waiting for a third-party endpoint to respond inside the Express request lifecycle, the dispatch API validates the request, creates an event, pushes a job into a BullMQ queue backed by Redis, and immediately returns `202 Accepted`.
+
+A separate worker process consumes queued jobs, signs outgoing payloads using HMAC SHA-256, sends the webhook request, records the result in MongoDB, and automatically retries failed deliveries using exponential backoff.
+
+The React dashboard provides real-time visibility into delivery status, latency, failures, retries, payloads, responses, and execution history using Socket.IO.
+
+## Features
+
+- Asynchronous webhook delivery using BullMQ and Redis
+- Automatic retries with exponential backoff
+- HMAC SHA-256 webhook signing
+- Timestamp-based replay protection
+- Project API-key authentication
+- Hashed API-key storage
+- Redis API-key caching
+- API-key rotation with cache invalidation
+- Per-project Redis rate limiting
+- JWT-based dashboard authentication
+- User-isolated Socket.IO rooms
+- Real-time webhook delivery updates
+- Delivery success and failure analytics
+- Latency monitoring
+- Request payload and response inspection
+- Complete delivery attempt history
+- Manual redelivery of failed events
+- Project management
+- Endpoint management
+- MongoDB Atlas persistence
+
+## Tech Stack
+
+### Frontend
+
+- React
+- TypeScript
+- Tailwind CSS
+- Recharts
+- Socket.IO Client
+- Vite
+
+### Backend
+
+- Node.js
+- Express
+- TypeScript
+- BullMQ
+- Redis
+- Socket.IO
+- MongoDB
+- Mongoose
+- JWT
+- Zod
+
+### Infrastructure
+
+- MongoDB Atlas
+- Hosted Redis
+- Render
+- Vercel
+
+## Architecture
+
+```text
+Client
+  |
+  | X-Pulse-API-Key
+  v
+Express Dispatch API
+  |
+  | POST /api/v1/dispatch
+  |
+  | 202 Accepted
+  v
+Redis / BullMQ
+  |
+  v
+Webhook Worker
+  |
+  | HMAC SHA-256 Signing
+  | HTTP Delivery
+  | Retry / Backoff
+  v
+Target Webhook Endpoint
+  |
+  v
+MongoDB Atlas
 
 
-mermaid
-sequenceDiagram
-autonumber
-participant App as External Client / Microservice
-participant Ingest as Express Ingestion Server (<2ms)
-participant Redis as Redis Stream Buffer
-participant Worker as Asynchronous Worker Process
-participant Mongo as MongoDB (Time-Series Collection)
-participant UI as React Console (Socket.io)
-
-
-App->>Ingest: POST /api/v1/logs (Payload)
-    Ingest->>Redis: XADD logs:stream * (Append Buffer)
-    Ingest->>UI: io.emit('log:new') (Real-Time Broadcast)
-    Ingest-->>App: 202 Accepted (Non-blocking response)
-
-    loop Every 2000ms or 500 records
-        Worker->>Redis: XREADGROUP mongo_writers
-        Worker->>Mongo: bulkWrite(insertOne[]) (Batch Insert)
-        Worker->>Redis: XACK (Clear Processed Logs)
-    end
-
-
-
-
-
----
-
-## 🚀 Performance Benchmarks
-
-| Metric | Direct DB Writes | LogPulse Architecture |
-| :--- | :--- | :--- |
-| **Ingestion Latency** | ~65ms / request | **< 2ms / request** |
-| **Database Calls** | 5,000 DB Ops / 5,000 logs | **10 DB Ops / 5,000 logs (500 Batch Size)** |
-| **Throughput Safety** | DB Connection Pool Exhaustion | **In-memory Stream Buffer** |
-
----
-
-## 🛠 Tech Stack
-
-- **Backend:** Node.js, TypeScript, Express, Zod, Socket.io
-- **Queue & Buffer:** Redis Streams (`XADD`, `XREADGROUP`, `XACK`)
-- **Storage:** MongoDB Time-Series Collections (`bulkWrite`)
-- **Frontend:** React, TypeScript, Tailwind CSS, Vite
-- **DevOps:** Docker, Docker Compose
+Webhook Worker
+  |
+  | Redis Pub/Sub
+  v
+Socket.IO Server
+  |
+  v
+React Dashboard
