@@ -8,7 +8,8 @@
 [![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 
-**Live Application:** https://logpulse-3dgx.vercel.app/  
+**Live Application:** https://logpulse-3dgx.vercel.app/
+
 **Backend API:** https://pulseengine-api.onrender.com
 
 ## Overview
@@ -111,3 +112,115 @@ Socket.IO Server
   |
   v
 React Dashboard
+```
+
+## Webhook Dispatch
+
+Send a webhook event using:
+
+```http
+POST /api/v1/dispatch
+```
+
+Required headers:
+
+```http
+Content-Type: application/json
+X-Pulse-API-Key: <project-api-key>
+```
+
+Example:
+
+```json
+{
+  "endpointId": "ep_example",
+  "payload": {
+    "event": "payment.completed",
+    "orderId": "ORD-1001"
+  }
+}
+```
+
+The API responds with `202 Accepted` after the event has been queued.
+
+## Security
+
+PulseEngine implements:
+
+- JWT authentication for dashboard users
+- Project API-key authentication
+- Hashed API-key storage
+- Redis API-key caching
+- API-key rotation with cache invalidation
+- HMAC SHA-256 webhook signing
+- Timestamp-based replay protection
+- Per-project rate limiting
+- User-isolated Socket.IO rooms
+
+## Local Development
+
+### Clone the repository
+
+```bash
+git clone git@github.com:bhupender2412/logpulse.git
+cd logpulse
+```
+
+### Start the backend
+
+```bash
+cd backend
+npm install
+npm run dev:server
+```
+
+### Start the webhook worker
+
+Open another terminal:
+
+```bash
+cd backend
+npm run dev:worker
+```
+
+### Start the frontend
+
+Open another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Before starting the application, create `.env` files using the provided `.env.example` files and provide your own MongoDB, Redis, JWT, and application configuration.
+
+## Deployment
+
+| Component | Platform |
+|---|---|
+| Frontend | Vercel |
+| Backend API | Render |
+| Webhook Worker | Render |
+| Database | MongoDB Atlas |
+| Queue / Cache | Redis |
+
+For the current portfolio deployment, the API and webhook worker run as separate Node.js processes inside the same Render service.
+
+## Production Links
+
+**Live Application**
+
+https://logpulse-3dgx.vercel.app/
+
+**Backend API**
+
+https://pulseengine-api.onrender.com
+
+**GitHub Repository**
+
+https://github.com/bhupender2412/logpulse
+
+## Author
+
+Bhupender Singh
