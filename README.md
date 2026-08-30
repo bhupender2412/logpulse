@@ -14,57 +14,704 @@ https://logpulse-3dgx.vercel.app/
 **Backend API:**  
 https://pulseengine-api.onrender.com
 
+**Health Check:**  
+https://pulseengine-api.onrender.com/api/health
+
 **Repository:**  
 https://github.com/bhupender2412/logpulse
 
 ---
 
-## Overview
+## Table of Contents
 
-PulseEngine is a real-time webhook delivery and monitoring platform designed to process outgoing webhook events asynchronously and reliably.
-
-Instead of waiting for a target webhook endpoint to respond inside the Express request lifecycle, the dispatch API authenticates the project, validates the request, creates an event, queues a BullMQ job in Redis, and immediately returns `202 Accepted`.
-
-A separate webhook worker consumes queued jobs, signs outgoing payloads using HMAC SHA-256, performs HTTP delivery, records every delivery attempt in MongoDB, and automatically retries failed deliveries using the configured retry policy.
-
-Redis Pub/Sub is used to communicate webhook lifecycle changes between the worker and API server. Socket.IO then sends those updates to authenticated dashboard users in real time.
-
-The React dashboard provides visibility into delivery status, latency, retries, failures, payloads, responses, attempt history, projects, endpoints, and delivery analytics.
+- [Overview](#overview)
+- [Project at a Glance](#project-at-a-glance)
+- [Application Walkthrough](#application-walkthrough)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Architecture](#architecture)
+- [Webhook Delivery Flow](#webhook-delivery-flow)
+- [Retry Flow](#retry-flow)
+- [Webhook Dispatch API](#webhook-dispatch-api)
+- [HMAC Webhook Signing](#hmac-webhook-signing)
+- [Authentication](#authentication)
+- [Role-Based Access Control](#role-based-access-control)
+- [Real-Time Event Isolation](#real-time-event-isolation)
+- [Project API-Key Security](#project-api-key-security)
+- [Endpoint Configuration](#endpoint-configuration)
+- [Webhook Event Model](#webhook-event-model)
+- [Analytics](#analytics)
+- [Main API Routes](#main-api-routes)
+- [Local Development](#local-development)
+- [Production Build](#production-build)
+- [Deployment](#deployment)
+- [Demo Data](#demo-data)
+- [Security Notes](#security-notes)
+- [Screenshots](#screenshots)
+- [Production Links](#production-links)
+- [Author](#author)
 
 ---
 
-## Live Demo
+# Overview
 
-PulseEngine includes a dedicated read-only demo environment for recruiters, interviewers, and developers who want to explore the application without modifying production configuration.
+PulseEngine is a real-time webhook delivery and monitoring platform designed to process outgoing webhook events asynchronously and reliably.
 
-Open:
+Instead of waiting for a target webhook endpoint to respond inside the Express request lifecycle, the dispatch API authenticates the project, validates the request, creates a webhook event, pushes a BullMQ job into Redis, and immediately returns `202 Accepted`.
+
+A separate webhook worker consumes queued jobs, signs outgoing payloads using HMAC SHA-256, performs the HTTP delivery, records every delivery attempt in MongoDB, and automatically retries failed deliveries according to the endpoint retry configuration.
+
+Redis Pub/Sub is used to publish webhook lifecycle changes from the worker to the API process. Socket.IO then forwards those events to authenticated users in real time.
+
+The React dashboard provides visibility into delivery status, latency, failures, retries, request payloads, responses, attempt history, projects, endpoints, and analytics.
+
+---
+
+# Project at a Glance
+
+## What Problem Does PulseEngine Solve?
+
+Modern applications frequently need to notify another system when an event occurs.
+
+Examples include:
+
+```text
+payment.completed
+order.created
+subscription.renewed
+user.registered
+invoice.generated
+security.alert
+```
+
+A simple implementation may send the webhook directly inside the original application request:
+
+```text
+Application Request
+        |
+        v
+Send Webhook
+        |
+        v
+Wait for External Server
+        |
+        v
+Return Response
+```
+
+This creates several problems:
+
+- A slow webhook receiver makes the original request slower.
+- A temporarily unavailable receiver can cause delivery failures.
+- Retry logic has to be implemented manually.
+- Delivery history is difficult to inspect.
+- Developers may not know what payload was sent or what response came back.
+- Debugging intermittent webhook failures becomes difficult.
+
+PulseEngine moves webhook delivery out of the original request lifecycle.
+
+```text
+Client
+   |
+   v
+PulseEngine Dispatch API
+   |
+   | 202 Accepted
+   v
+BullMQ Queue
+   |
+   v
+Webhook Worker
+   |
+   v
+Target Endpoint
+```
+
+The API accepts the event quickly, while the worker performs the network delivery asynchronously.
+
+PulseEngine also stores the complete delivery lifecycle so developers can answer questions such as:
+
+```text
+Was the webhook delivered?
+How many attempts were made?
+What HTTP status was returned?
+How long did the request take?
+What payload was sent?
+What response came back?
+Why did the request fail?
+Was the event retried?
+Was it manually redelivered?
+```
+
+This makes webhook delivery more reliable, observable, and easier to debug.
+
+## Who Would Use PulseEngine?
+
+PulseEngine is useful for applications and teams that need reliable outgoing webhook delivery.
+
+### Backend Developers
+
+Backend developers can use a centralized delivery service instead of implementing retries, signing, delivery history, monitoring, and redelivery logic separately in every project.
+
+Example:
+
+```text
+E-commerce Backend
+        |
+        v
+PulseEngine
+        |
+        +----> Inventory Service
+        |
+        +----> CRM
+        |
+        +----> Analytics Platform
+```
+
+### SaaS Applications
+
+A SaaS application may need to notify customer systems about events such as:
+
+```text
+invoice.created
+payment.completed
+subscription.cancelled
+user.created
+report.generated
+```
+
+PulseEngine can queue and deliver those events reliably.
+
+### Platform and Infrastructure Teams
+
+A platform team can centralize webhook delivery for multiple internal services.
+
+```text
+Service A ----\
+Service B -----\
+Service C ------> PulseEngine ------> External Systems
+Service D -----/
+```
+
+### Developers Debugging Webhook Integrations
+
+The dashboard helps developers inspect:
+
+- Payloads
+- Responses
+- HTTP status codes
+- Latency
+- Errors
+- Attempt history
+- Retry history
+- Redelivery history
+
+## What Can I Actually Do in the UI?
+
+PulseEngine includes a React-based monitoring and administration console.
+
+### Dashboard
+
+The dashboard displays:
+
+- Total webhook deliveries
+- Successful deliveries
+- Failed deliveries
+- Success rate
+- Failure rate
+- Average delivery latency
+- Delivery activity over time
+- Recent webhook events
+- Project filters
+- Endpoint filters
+- Status filters
+- Real-time Socket.IO connection status
+
+### Project Management
+
+Administrators can:
+
+- Create projects
+- Generate project API keys
+- View masked API-key information
+- Rotate API keys
+- Delete projects
+
+Each project has its own API key used to authenticate webhook dispatch requests.
+
+### Endpoint Management
+
+Administrators can configure webhook destinations.
+
+Each endpoint contains:
+
+- Endpoint ID
+- Project association
+- Target webhook URL
+- HTTP method
+- Maximum retry count
+- HMAC signing secret
+- Active or disabled state
+
+Administrators can create, edit, enable, disable, and delete endpoints.
+
+### Event Inspection
+
+Every webhook event can be opened in the Payload Inspector.
+
+The inspector displays:
+
+- Event ID
+- Project
+- Endpoint
+- Delivery status
+- HTTP status
+- Latency
+- Request payload
+- Response body
+- Error information
+- Attempt count
+- Attempt history
+- Completion timestamps
+- Redelivery history
+
+### Failed Delivery Investigation
+
+Failed webhook events show the complete delivery attempt sequence.
+
+Example:
+
+```text
+Attempt 1
+HTTP 500
+Failed
+     |
+     v
+Attempt 2
+HTTP 500
+Failed
+     |
+     v
+Attempt 3
+HTTP 503
+Failed
+```
+
+Administrators can manually redeliver events that remain failed after automatic retries.
+
+### Real-Time Monitoring
+
+Webhook lifecycle events appear on the dashboard without requiring a page refresh.
+
+```text
+Webhook Worker
+      |
+      v
+Redis Pub/Sub
+      |
+      v
+API Server
+      |
+      v
+Socket.IO
+      |
+      v
+React Dashboard
+```
+
+## How Do I Try It?
+
+A public read-only demo is available at:
 
 https://logpulse-3dgx.vercel.app/
 
-Then click:
+Open the application and click:
 
 ```text
 Try Live Demo
 ```
 
+No account creation is required.
+
 The demo environment contains preloaded:
 
 - Projects
-- Webhook endpoints
-- Successful deliveries
-- Failed deliveries
+- Endpoints
+- Successful webhook events
+- Failed webhook events
 - Retry scenarios
-- Manual redelivery history
+- Redelivery history
 - Request payloads
 - Response bodies
-- Delivery latency information
-- Time-series analytics
+- Latency measurements
+- Analytics
 
-The demo account is read-only.
+The demo account can inspect the platform but cannot modify production configuration.
 
-Administrative operations such as project creation, API-key rotation, endpoint modification, deletion, and manual webhook redelivery are restricted.
+The following operations are disabled in Demo Mode:
 
-These restrictions are enforced by backend role-based authorization even if a user attempts to call the protected APIs directly.
+```text
+Create projects
+Delete projects
+Rotate API keys
+Create endpoints
+Edit endpoints
+Enable or disable endpoints
+Delete endpoints
+Manually redeliver failed events
+```
+
+These restrictions are enforced by backend authorization as well as the frontend interface.
+
+## What Makes PulseEngine Technically Interesting?
+
+PulseEngine combines several backend and distributed-system concepts rather than operating as a simple CRUD application.
+
+### 1. Asynchronous Request Processing
+
+Webhook delivery is separated from the original API request.
+
+```text
+POST /api/v1/dispatch
+        |
+        v
+Validate Request
+        |
+        v
+Store Event
+        |
+        v
+Queue BullMQ Job
+        |
+        v
+202 Accepted
+```
+
+The worker performs the actual network request later.
+
+### 2. Redis and BullMQ Job Processing
+
+Redis provides the infrastructure for BullMQ.
+
+```text
+Express API
+    |
+    v
+BullMQ
+    |
+    v
+Redis
+    |
+    v
+Webhook Worker
+```
+
+The worker processes jobs independently from the API request lifecycle.
+
+### 3. Automatic Retry Handling
+
+Webhook endpoints can configure retry limits.
+
+Failed requests are retried using backoff behavior, and every attempt is stored separately.
+
+### 4. HMAC SHA-256 Webhook Signing
+
+Outgoing webhook requests are cryptographically signed.
+
+```text
+timestamp + "." + payload
+          |
+          v
+     HMAC SHA-256
+          |
+          v
+Webhook Signature
+```
+
+The receiving system can verify the signature using its endpoint signing secret.
+
+### 5. Replay Protection
+
+Signed requests contain timestamp information so receiving systems can reject stale webhook requests outside the allowed replay-protection window.
+
+### 6. Secure Project API Keys
+
+Project API keys are not stored in plaintext.
+
+PulseEngine stores:
+
+```text
+apiKeyHash
+apiKeyLast4
+```
+
+The raw key is shown only when generated or rotated.
+
+Redis is used to cache validated API-key lookups, and previous cache entries are invalidated when a key is rotated.
+
+### 7. Real-Time Worker-to-Dashboard Communication
+
+The worker publishes delivery updates through Redis Pub/Sub.
+
+```text
+Worker
+   |
+   v
+Redis Pub/Sub
+   |
+   v
+API Server
+   |
+   v
+Socket.IO
+   |
+   v
+Browser
+```
+
+This allows asynchronous background work to appear immediately in the user interface.
+
+### 8. User-Isolated Socket.IO Rooms
+
+Socket.IO connections are authenticated using JWT.
+
+Each user joins a dedicated room:
+
+```text
+user:<userId>
+```
+
+Webhook lifecycle events are emitted only to the owner of the corresponding data.
+
+### 9. Complete Delivery Audit Trail
+
+PulseEngine stores individual delivery attempts rather than only the final result.
+
+Example:
+
+```text
+Attempt 1
+503
+91 ms
+Failed
+
+Attempt 2
+503
+103 ms
+Failed
+
+Attempt 3
+200
+164 ms
+Success
+```
+
+### 10. Read-Only Public Demo
+
+The production application includes a dedicated:
+
+```text
+role: demo
+```
+
+The demo account uses isolated preloaded data and can inspect the platform without modifying production configuration.
+
+Backend authorization prevents restricted actions even if someone bypasses the React interface and calls the API directly.
+
+## How Is PulseEngine Deployed?
+
+The production application uses multiple managed services.
+
+```text
+                    Internet
+                       |
+              +--------+--------+
+              |                 |
+              v                 v
+           Vercel             Render
+        React Frontend      API + Worker
+                                |
+                         +------+------+
+                         |             |
+                         v             v
+                       Redis       MongoDB Atlas
+```
+
+### Frontend
+
+The React frontend is deployed on Vercel.
+
+Production URL:
+
+https://logpulse-3dgx.vercel.app/
+
+### Backend
+
+The Node.js and Express backend is deployed on Render.
+
+Production API:
+
+https://pulseengine-api.onrender.com
+
+Health endpoint:
+
+https://pulseengine-api.onrender.com/api/health
+
+### Webhook Worker
+
+For the current portfolio deployment, the webhook worker runs as a separate Node.js process alongside the API process inside the same Render service.
+
+```text
+Render Service
+      |
+      +-----------------------+
+      |                       |
+      v                       v
+API Process              Worker Process
+node dist/server.js      node dist/workers/webhookWorker.js
+```
+
+The processes communicate through Redis and MongoDB rather than relying on shared in-memory state.
+
+### Database
+
+Application data is persisted in MongoDB Atlas.
+
+### Queue, Cache, Rate Limiting, and Pub/Sub
+
+Redis is used for:
+
+```text
+BullMQ queue
+API-key caching
+Per-project rate limiting
+Redis Pub/Sub
+Realtime worker events
+```
+
+## How Do I Reproduce It Locally?
+
+Clone the repository:
+
+```bash
+git clone git@github.com:bhupender2412/logpulse.git
+cd logpulse
+```
+
+### 1. Configure the Backend
+
+```bash
+cd backend
+npm install
+```
+
+Create:
+
+```text
+backend/.env
+```
+
+using:
+
+```text
+backend/.env.example
+```
+
+Provide your own configuration for:
+
+```text
+MongoDB
+Redis
+JWT
+CORS
+Application environment
+```
+
+Build the backend:
+
+```bash
+npm run build
+```
+
+### 2. Start the API
+
+```bash
+npm run dev:server
+```
+
+### 3. Start the Worker
+
+Open another terminal:
+
+```bash
+cd backend
+npm run dev:worker
+```
+
+Both processes should run for the complete webhook-delivery pipeline.
+
+```text
+Terminal 1
+API Server
+
+Terminal 2
+Webhook Worker
+```
+
+### 4. Configure the Frontend
+
+Open another terminal:
+
+```bash
+cd frontend
+npm install
+```
+
+Create the frontend environment file using:
+
+```text
+frontend/.env.example
+```
+
+and point the frontend to the local backend.
+
+Start the frontend:
+
+```bash
+npm run dev
+```
+
+The Vite development server normally runs at:
+
+```text
+http://localhost:5173
+```
+
+### 5. Verify the Backend
+
+```bash
+curl http://localhost:4000/api/health
+```
+
+A healthy local environment should report MongoDB and Redis as connected.
+
+### 6. Local Architecture
+
+```text
+React / Vite
+http://localhost:5173
+        |
+        v
+Express API
+http://localhost:4000
+        |
+        +------> MongoDB
+        |
+        +------> Redis / BullMQ
+                    |
+                    v
+               Webhook Worker
+```
 
 ---
 
@@ -72,24 +719,21 @@ These restrictions are enforced by backend role-based authorization even if a us
 
 ## 1. Dashboard
 
-The PulseEngine dashboard provides a high-level view of webhook delivery activity.
+The main dashboard provides a high-level view of webhook delivery activity.
 
 It displays:
 
-- Total webhook deliveries
+- Total deliveries
 - Successful deliveries
 - Failed deliveries
-- Success rate
-- Failure rate
+- Success and failure rates
 - Average latency
 - Delivery activity over time
-- Project filtering
-- Endpoint filtering
-- Status filtering
-- Recent webhook events
+- Project, endpoint, and status filters
+- Recent webhook deliveries
 - Real-time Socket.IO connection status
 
-The dashboard is updated as webhook lifecycle events are processed.
+The dashboard updates as delivery lifecycle events are processed.
 
 ![PulseEngine Dashboard](./screenshots/dashboard.png)
 
@@ -97,23 +741,20 @@ The dashboard is updated as webhook lifecycle events are processed.
 
 ## 2. Project Management
 
-Projects isolate webhook traffic between different applications and services.
+Projects isolate webhook traffic between applications and services.
 
-Each project receives a dedicated API key which is used to authenticate webhook dispatch requests.
+Each project receives a dedicated API key used to authenticate webhook dispatch requests.
 
-PulseEngine supports:
+Project functionality includes:
 
-- Project creation
-- Unique project identifiers
-- Project API-key generation
-- SHA-256 API-key hashing
-- API-key last-four identification
-- API-key rotation
-- Redis API-key cache invalidation
-- Project deletion
-- User ownership isolation
-
-The complete plaintext API key is shown only when it is generated or rotated.
+- Create projects
+- Generate project API keys
+- Store only hashed API keys
+- Display only the last four characters of stored keys
+- Rotate API keys
+- Invalidate previous Redis API-key cache entries
+- Delete projects
+- Enforce user ownership
 
 Demo users can inspect projects but cannot create, rotate, or delete them.
 
@@ -129,15 +770,14 @@ Each endpoint contains:
 
 - Endpoint ID
 - Friendly name
-- Associated project
+- Project association
 - Target webhook URL
 - HTTP method
 - Maximum retry count
 - HMAC signing secret
-- Active/disabled status
-- Owner
+- Active or disabled status
 
-Supported HTTP methods include:
+Supported methods:
 
 ```text
 POST
@@ -145,9 +785,9 @@ PUT
 PATCH
 ```
 
-Administrators can create, edit, enable, disable, and delete webhook endpoints.
+Administrators can create, edit, enable, disable, and delete endpoints.
 
-Demo users receive read-only access to endpoint configuration.
+Demo users receive read-only access.
 
 ![PulseEngine Endpoint Configuration](./screenshots/endpoints.png)
 
@@ -174,8 +814,6 @@ The event details view includes:
 - Delivery attempt history
 - Manual redelivery history
 
-The event inspector provides a complete audit trail of each webhook delivery.
-
 ### Event Summary and Payload
 
 ![Webhook Event Details - Summary](./screenshots/event-details-1.png)
@@ -200,7 +838,7 @@ Each attempt is stored independently with:
 - Error message
 - Attempt timestamp
 
-A failed delivery may follow a flow similar to:
+A failed delivery may look like:
 
 ```text
 Attempt 1
@@ -224,7 +862,7 @@ HTTP 503
 Failed
 ```
 
-Another webhook may recover during a later attempt:
+Another event may recover on a later attempt:
 
 ```text
 Attempt 1
@@ -242,9 +880,9 @@ Success
 
 Administrators can manually redeliver webhook events that remain failed after automatic retries.
 
-Manual redelivery creates a new event linked to the original event through the `redeliveryOf` field. This preserves the original delivery history instead of overwriting it.
+Manual redelivery creates a new webhook event linked to the original through the `redeliveryOf` field, preserving the original delivery history.
 
-Manual redelivery is disabled for the read-only demo account.
+Manual redelivery is disabled for Demo Mode.
 
 ### Failed Event Summary
 
@@ -264,7 +902,7 @@ Manual redelivery is disabled for the read-only demo account.
 
 Webhook processing takes place asynchronously in the worker process.
 
-As the worker processes an event, it publishes lifecycle information through Redis Pub/Sub.
+The worker publishes lifecycle changes through Redis Pub/Sub.
 
 The API server receives those messages and forwards them to authenticated clients through Socket.IO.
 
@@ -290,7 +928,7 @@ Authenticated User Room
 React Dashboard
 ```
 
-Realtime lifecycle events include states such as:
+Realtime lifecycle states include:
 
 ```text
 processing
@@ -301,15 +939,13 @@ failed
 
 Socket.IO connections are authenticated using JWT.
 
-Each connected dashboard user joins an isolated room:
+Each dashboard user joins an isolated room:
 
 ```text
 user:<userId>
 ```
 
-This ensures webhook updates are delivered only to the user who owns the corresponding project and event.
-
-The screenshot below shows a production webhook event appearing on the dashboard through the real-time delivery pipeline.
+The screenshot below shows a production webhook event appearing on the dashboard through the real-time pipeline.
 
 ![PulseEngine Real-Time Webhook Update](./screenshots/realtime-update.png)
 
@@ -319,18 +955,18 @@ The screenshot below shows a production webhook event appearing on the dashboard
 
 ## Webhook Delivery
 
-- Asynchronous webhook processing
-- BullMQ job queue
-- Redis-backed queue
+- Asynchronous webhook delivery
+- BullMQ-based background job processing
+- Redis-backed delivery queue
 - Dedicated worker process
-- Configurable retry policies
+- Configurable retry limits
 - Automatic retries
-- Exponential backoff
-- Complete attempt history
-- Manual redelivery
-- HTTP status tracking
+- Backoff between failed attempts
+- Delivery attempt tracking
+- Manual redelivery of failed webhook events
+- HTTP response-status tracking
 - Response-body storage
-- Latency monitoring
+- Delivery latency monitoring
 
 ## Security
 
@@ -356,9 +992,9 @@ The screenshot below shows a production webhook event appearing on the dashboard
 - Failure-rate calculation
 - Average latency
 - Time-series charts
-- Project filters
-- Endpoint filters
-- Status filters
+- Project filtering
+- Endpoint filtering
+- Status filtering
 - Event pagination
 - Payload inspection
 - Response inspection
@@ -391,6 +1027,7 @@ The screenshot below shows a production webhook event appearing on the dashboard
 - JSON Web Tokens
 - Zod
 - bcryptjs
+- Axios
 
 ## Infrastructure
 
@@ -474,7 +1111,7 @@ Client
   v
 Dispatch API
   |
-  | Validate API Key
+  | Validate Project API Key
   | Apply Rate Limit
   | Validate Endpoint
   |
@@ -510,6 +1147,38 @@ Dashboard Update
 
 ---
 
+# Retry Flow
+
+When a webhook delivery fails, BullMQ retries the request according to the endpoint retry configuration.
+
+Example:
+
+```text
+Attempt 1
+HTTP 503
+Failed
+    |
+    v
+Backoff
+    |
+    v
+Attempt 2
+HTTP 503
+Failed
+    |
+    v
+Backoff
+    |
+    v
+Attempt 3
+HTTP 200
+Success
+```
+
+Each attempt is stored individually in MongoDB so the dashboard can show the complete delivery lifecycle rather than only the final state.
+
+---
+
 # Webhook Dispatch API
 
 ## Endpoint
@@ -539,7 +1208,7 @@ X-Pulse-API-Key: <project-api-key>
 }
 ```
 
-A valid request is accepted asynchronously:
+A successfully accepted request returns:
 
 ```http
 202 Accepted
@@ -559,6 +1228,8 @@ Example response:
 }
 ```
 
+The webhook is processed asynchronously after this response.
+
 ---
 
 # HMAC Webhook Signing
@@ -577,9 +1248,9 @@ timestamp + "." + requestBody
       Webhook Signature
 ```
 
-The receiving endpoint can use its signing secret to independently verify that the webhook originated from PulseEngine.
+The receiving endpoint can use its signing secret to verify that the webhook was generated by PulseEngine.
 
-Timestamp validation is also used to protect receiving endpoints from replay attacks.
+Timestamp validation is used to reduce replay risk.
 
 ---
 
@@ -590,8 +1261,6 @@ PulseEngine uses separate authentication mechanisms for dashboard users and webh
 ## Dashboard Authentication
 
 Dashboard users authenticate using email and password.
-
-After successful authentication, the backend returns a JWT.
 
 ```text
 Email + Password
@@ -614,7 +1283,7 @@ External services authenticate webhook dispatch requests using:
 X-Pulse-API-Key: <project-api-key>
 ```
 
-The complete project API key is not stored in plaintext.
+Project API keys are not stored in plaintext.
 
 MongoDB stores:
 
@@ -671,7 +1340,23 @@ Backend middleware enforces these restrictions and returns:
 403 Forbidden
 ```
 
-for restricted operations.
+for restricted actions.
+
+---
+
+# Real-Time Event Isolation
+
+Socket.IO connections are authenticated using JWT.
+
+Each authenticated user joins a dedicated room:
+
+```text
+user:<userId>
+```
+
+Webhook lifecycle events are emitted only to the user who owns the corresponding webhook data.
+
+This prevents one dashboard user from receiving another user's delivery events.
 
 ---
 
@@ -679,7 +1364,7 @@ for restricted operations.
 
 Each project receives an API key when it is created.
 
-Example:
+Example format:
 
 ```text
 lp_live_xxxxxxxxxxxxxxxxxxxxx
@@ -693,9 +1378,9 @@ or
 API key rotated
 ```
 
-PulseEngine stores only its SHA-256 hash.
+PulseEngine stores only the SHA-256 hash and last four characters.
 
-Redis caches validated project API keys to reduce repeated database lookups.
+Redis caches successful project API-key validation results.
 
 When a key is rotated:
 
@@ -706,7 +1391,7 @@ Generate New Key
 Store New Hash
       |
       v
-Invalidate Previous Redis Entry
+Invalidate Previous Redis Cache Entry
       |
       v
 Old API Key Stops Working
@@ -802,7 +1487,7 @@ Supported analytics ranges include:
 all time
 ```
 
-The backend produces zero-filled time-series buckets so dashboard charts remain continuous even when no event occurred during a particular interval.
+The backend produces zero-filled time-series buckets so charts remain continuous when no events occur during a particular interval.
 
 ---
 
@@ -870,7 +1555,6 @@ POST /api/v1/dispatch
 
 ```bash
 git clone git@github.com:bhupender2412/logpulse.git
-
 cd logpulse
 ```
 
@@ -878,7 +1562,6 @@ cd logpulse
 
 ```bash
 cd backend
-
 npm install
 ```
 
@@ -904,7 +1587,7 @@ CORS
 Application environment
 ```
 
-Build:
+Build the backend:
 
 ```bash
 npm run build
@@ -916,21 +1599,16 @@ Start the API:
 npm run dev:server
 ```
 
----
-
 ## Start the Webhook Worker
 
 Open another terminal:
 
 ```bash
 cd backend
-
 npm run dev:worker
 ```
 
-The API and worker must both be running to test the complete asynchronous delivery pipeline locally.
-
----
+The API and worker should both be running for the complete local delivery pipeline.
 
 ## Frontend Setup
 
@@ -938,17 +1616,34 @@ Open another terminal:
 
 ```bash
 cd frontend
-
 npm install
+```
 
+Create the frontend environment configuration using:
+
+```text
+frontend/.env.example
+```
+
+Start the frontend:
+
+```bash
 npm run dev
 ```
 
-The development frontend runs at:
+The development frontend normally runs at:
 
 ```text
 http://localhost:5173
 ```
+
+## Verify the Backend
+
+```bash
+curl http://localhost:4000/api/health
+```
+
+A healthy environment should report MongoDB and Redis as connected.
 
 ---
 
@@ -958,7 +1653,6 @@ http://localhost:5173
 
 ```bash
 cd backend
-
 npm run build
 ```
 
@@ -978,11 +1672,10 @@ npm run start:worker
 
 ```bash
 cd frontend
-
 npm run build
 ```
 
-The production frontend is generated in:
+The frontend production output is generated in:
 
 ```text
 frontend/dist
@@ -998,11 +1691,11 @@ frontend/dist
 | Backend API | Render |
 | Webhook Worker | Render |
 | Database | MongoDB Atlas |
-| Queue / Cache | Hosted Redis |
+| Queue / Cache / Pub/Sub | Hosted Redis |
 
-For the current portfolio deployment, the API server and webhook worker run as separate Node.js processes inside the same Render web service.
+For the current portfolio deployment, the API server and webhook worker run as two Node.js processes inside the same Render web service.
 
-The Render service starts both processes using the application's `start:render` script.
+The Render service starts both processes through the project's `start:render` script.
 
 Conceptually:
 
@@ -1023,33 +1716,13 @@ API Process            Worker Process
           MongoDB Atlas
 ```
 
-This allows the complete asynchronous delivery architecture to run without requiring a separate paid background-worker instance for the portfolio deployment.
-
----
-
-# Production Links
-
-## Live Application
-
-https://logpulse-3dgx.vercel.app/
-
-## Backend API
-
-https://pulseengine-api.onrender.com
-
-## Health Check
-
-https://pulseengine-api.onrender.com/api/health
-
-## GitHub Repository
-
-https://github.com/bhupender2412/logpulse
+This allows the portfolio deployment to demonstrate the complete asynchronous pipeline without requiring a separate paid Render background-worker service.
 
 ---
 
 # Demo Data
 
-The read-only demo environment contains representative events including:
+The read-only demo environment contains representative webhook events such as:
 
 ```text
 payment.completed
@@ -1063,17 +1736,18 @@ user.registered
 subscription.renewed
 ```
 
-These events demonstrate:
+The seeded demo data demonstrates:
 
-- First-attempt success
-- Failed delivery
+- Successful first-attempt deliveries
+- Failed deliveries
 - Multiple retry attempts
 - Retry recovery
-- Final delivery failure
+- Final failure after all attempts
 - Manual redelivery history
 - Different HTTP response codes
-- Different latency values
-- Request and response inspection
+- Different latency measurements
+- Request payload inspection
+- Response inspection
 
 ---
 
@@ -1081,7 +1755,7 @@ These events demonstrate:
 
 Production secrets and credentials are not committed to the repository.
 
-Environment-specific values are stored in `.env` files while `.env.example` documents the required variables.
+Environment-specific values are stored in `.env` files, while `.env.example` documents the required variables.
 
 PulseEngine applies multiple security layers:
 
@@ -1110,7 +1784,54 @@ Timestamp Replay Protection
 Socket.IO User Isolation
 ```
 
-Frontend restrictions provide a better user experience, but backend authorization remains the security boundary.
+Frontend restrictions improve the user experience, while backend authorization remains responsible for enforcing access control.
+
+---
+
+# Screenshots
+
+README screenshots are stored in:
+
+```text
+screenshots/
+```
+
+Expected files:
+
+```text
+screenshots/
+├── dashboard.png
+├── projects.png
+├── endpoints.png
+├── event-details-1.png
+├── event-details-2.png
+├── failed-delivery-1.png
+├── failed-delivery-2.png
+├── failed-delivery-3.png
+└── realtime-update.png
+```
+
+These files are documentation assets and are intentionally stored at the repository root rather than inside the frontend runtime assets.
+
+---
+
+# Production Links
+
+## Live Application
+
+https://logpulse-3dgx.vercel.app/
+
+## Backend API
+
+https://pulseengine-api.onrender.com
+
+## Health Check
+
+https://pulseengine-api.onrender.com/api/health
+
+## GitHub Repository
+
+https://github.com/bhupender2412/logpulse
 
 ---
 
