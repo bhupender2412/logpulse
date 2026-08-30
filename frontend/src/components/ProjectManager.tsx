@@ -24,6 +24,10 @@ import {
   type Project,
 } from "../api/projectsApi";
 
+import {
+  useAuth,
+} from "../context/AuthContext";
+
 // ==========================================================
 // PROPS
 // ==========================================================
@@ -40,6 +44,19 @@ interface ProjectManagerProps {
 export default function ProjectManager({
   onProjectsChanged,
 }: ProjectManagerProps) {
+  // ========================================================
+  // AUTH
+  // ========================================================
+
+  const {
+    user,
+  } =
+    useAuth();
+
+  const isDemo =
+    user?.role ===
+    "demo";
+
   // ========================================================
   // DATA
   // ========================================================
@@ -259,6 +276,10 @@ export default function ProjectManager({
     ) => {
       event.preventDefault();
 
+      if (isDemo) {
+        return;
+      }
+
       try {
         setCreating(
           true
@@ -337,6 +358,10 @@ export default function ProjectManager({
       project:
         Project
     ) => {
+      if (isDemo) {
+        return;
+      }
+
       const confirmed =
         window.confirm(
           `Rotate API key for "${project.name}"?\n\nThe current API key will immediately stop working.`
@@ -397,6 +422,10 @@ export default function ProjectManager({
       project:
         Project
     ) => {
+      if (isDemo) {
+        return;
+      }
+
       const confirmed =
         window.confirm(
           `Delete project "${project.name}"?\n\nThis action cannot be undone.`
@@ -486,16 +515,28 @@ export default function ProjectManager({
 
         <div>
 
-          <p className="text-emerald-400 text-xs font-semibold tracking-[0.18em] mb-2">
-            PROJECT CONFIGURATION
-          </p>
+          <div className="flex flex-wrap items-center gap-3 mb-2">
+
+            <p className="text-emerald-400 text-xs font-semibold tracking-[0.18em]">
+              PROJECT CONFIGURATION
+            </p>
+
+            {isDemo && (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-semibold uppercase tracking-wide">
+                Demo Mode
+              </span>
+            )}
+
+          </div>
 
           <h2 className="text-3xl font-bold">
             Projects
           </h2>
 
           <p className="text-zinc-500 mt-2">
-            Manage developer projects and API credentials.
+            {isDemo
+              ? "Explore preconfigured demo projects and API authentication details."
+              : "Manage developer projects and API credentials."}
           </p>
 
         </div>
@@ -512,7 +553,7 @@ export default function ProjectManager({
             disabled={
               refreshing
             }
-            className="h-11 px-4 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 flex items-center gap-2 text-sm"
+            className="h-11 px-4 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-60 flex items-center gap-2 text-sm transition"
           >
 
             <RefreshCw
@@ -530,29 +571,50 @@ export default function ProjectManager({
 
           </button>
 
-          <button
-            type="button"
-            onClick={() =>
-              setShowCreateForm(
-                true
-              )
-            }
-            className="h-11 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 text-sm font-medium"
-          >
-
-            <Plus
-              size={
-                17
+          {!isDemo && (
+            <button
+              type="button"
+              onClick={() =>
+                setShowCreateForm(
+                  true
+                )
               }
-            />
+              className="h-11 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2 text-sm font-medium transition"
+            >
 
-            Create Project
+              <Plus
+                size={
+                  17
+                }
+              />
 
-          </button>
+              Create Project
+
+            </button>
+          )}
 
         </div>
 
       </div>
+
+      {/* ====================================================
+          DEMO NOTICE
+      ==================================================== */}
+
+      {isDemo && (
+        <div className="mb-6 px-5 py-4 rounded-xl bg-cyan-500/5 border border-cyan-500/20">
+
+          <p className="text-sm font-medium text-cyan-400">
+            Read-only Demo
+          </p>
+
+          <p className="text-sm text-zinc-500 mt-1">
+            Project creation, API-key rotation and project deletion
+            are disabled for this account.
+          </p>
+
+        </div>
+      )}
 
       {/* ====================================================
           ERROR
@@ -642,11 +704,13 @@ export default function ProjectManager({
           />
 
           <p className="font-medium text-zinc-300">
-            No projects yet
+            No projects found
           </p>
 
           <p className="text-sm text-zinc-600 mt-2">
-            Create your first project to receive a PulseEngine API key.
+            {isDemo
+              ? "Demo project data is currently unavailable."
+              : "Create your first project to receive a PulseEngine API key."}
           </p>
 
         </div>
@@ -664,7 +728,9 @@ export default function ProjectManager({
                 className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 hover:border-zinc-700 transition"
               >
 
-                {/* PROJECT */}
+                {/* ==========================================
+                    PROJECT HEADER
+                ========================================== */}
 
                 <div className="flex items-start justify-between gap-4 mb-5">
 
@@ -682,9 +748,19 @@ export default function ProjectManager({
 
                     <div className="min-w-0">
 
-                      <h3 className="font-semibold text-lg truncate">
-                        {project.name}
-                      </h3>
+                      <div className="flex flex-wrap items-center gap-2">
+
+                        <h3 className="font-semibold text-lg truncate">
+                          {project.name}
+                        </h3>
+
+                        {isDemo && (
+                          <span className="inline-flex px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-500 text-[10px] uppercase tracking-wide">
+                            Read Only
+                          </span>
+                        )}
+
+                      </div>
 
                       <p className="font-mono text-xs text-zinc-500 mt-1 break-all">
                         {project.projectId}
@@ -696,7 +772,9 @@ export default function ProjectManager({
 
                 </div>
 
-                {/* API KEY */}
+                {/* ==========================================
+                    API KEY
+                ========================================== */}
 
                 <div className="bg-black border border-zinc-800 rounded-xl p-4 mb-5">
 
@@ -726,7 +804,9 @@ export default function ProjectManager({
 
                 </div>
 
-                {/* DATE */}
+                {/* ==========================================
+                    DATE
+                ========================================== */}
 
                 <p className="text-xs text-zinc-600 mb-5">
                   Created{" "}
@@ -735,71 +815,87 @@ export default function ProjectManager({
                   ).toLocaleString()}
                 </p>
 
-                {/* ACTIONS */}
+                {/* ==========================================
+                    ACTIONS
+                ========================================== */}
 
-                <div className="flex flex-wrap items-center gap-3">
+                {!isDemo ? (
+                  <div className="flex flex-wrap items-center gap-3">
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void handleRotate(
-                        project
-                      )
-                    }
-                    disabled={
-                      rotatingProjectId ===
-                      project.projectId
-                    }
-                    className="px-4 py-2 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-sm flex items-center gap-2"
-                  >
-
-                    <RotateCcw
-                      size={
-                        15
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleRotate(
+                          project
+                        )
                       }
-                      className={
+                      disabled={
                         rotatingProjectId ===
                         project.projectId
-                          ? "animate-spin"
-                          : ""
                       }
-                    />
+                      className="px-4 py-2 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-sm flex items-center gap-2 transition"
+                    >
 
-                    {rotatingProjectId ===
-                    project.projectId
-                      ? "Rotating..."
-                      : "Rotate Key"}
+                      <RotateCcw
+                        size={
+                          15
+                        }
+                        className={
+                          rotatingProjectId ===
+                          project.projectId
+                            ? "animate-spin"
+                            : ""
+                        }
+                      />
 
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void handleDelete(
-                        project
-                      )
-                    }
-                    disabled={
-                      deletingProjectId ===
+                      {rotatingProjectId ===
                       project.projectId
-                    }
-                    className="px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-sm flex items-center gap-2"
-                  >
+                        ? "Rotating..."
+                        : "Rotate Key"}
 
-                    <Trash2
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleDelete(
+                          project
+                        )
+                      }
+                      disabled={
+                        deletingProjectId ===
+                        project.projectId
+                      }
+                      className="px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-sm flex items-center gap-2 transition"
+                    >
+
+                      <Trash2
+                        size={
+                          15
+                        }
+                      />
+
+                      {deletingProjectId ===
+                      project.projectId
+                        ? "Deleting..."
+                        : "Delete"}
+
+                    </button>
+
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-zinc-600">
+
+                    <KeyRound
                       size={
-                        15
+                        14
                       }
                     />
 
-                    {deletingProjectId ===
-                    project.projectId
-                      ? "Deleting..."
-                      : "Delete"}
+                    Administrative actions disabled in Demo Mode
 
-                  </button>
-
-                </div>
+                  </div>
+                )}
 
               </div>
             )
@@ -812,7 +908,8 @@ export default function ProjectManager({
           CREATE PROJECT MODAL
       ==================================================== */}
 
-      {showCreateForm && (
+      {showCreateForm &&
+        !isDemo && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
 
           <button
@@ -849,7 +946,7 @@ export default function ProjectManager({
                     false
                   )
                 }
-                className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center"
+                className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center hover:bg-zinc-800 transition"
               >
                 <X
                   size={
@@ -866,6 +963,10 @@ export default function ProjectManager({
               }
               className="p-6 space-y-5"
             >
+
+              {/* ============================================
+                  PROJECT NAME
+              ============================================ */}
 
               <div>
 
@@ -894,6 +995,10 @@ export default function ProjectManager({
                 />
 
               </div>
+
+              {/* ============================================
+                  PROJECT ID
+              ============================================ */}
 
               <div>
 
@@ -929,12 +1034,16 @@ export default function ProjectManager({
 
               </div>
 
+              {/* ============================================
+                  SUBMIT
+              ============================================ */}
+
               <button
                 type="submit"
                 disabled={
                   creating
                 }
-                className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-900 font-medium"
+                className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-900 font-medium transition"
               >
                 {creating
                   ? "Creating..."
@@ -952,7 +1061,8 @@ export default function ProjectManager({
           API KEY REVEAL MODAL
       ==================================================== */}
 
-      {revealedApiKey && (
+      {revealedApiKey &&
+        !isDemo && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
 
           <div className="absolute inset-0 bg-black/85 backdrop-blur-sm" />
@@ -1001,7 +1111,7 @@ export default function ProjectManager({
               </div>
 
               <div className="mt-4 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm">
-                ⚠ {secretWarning}
+                {secretWarning}
               </div>
 
               <div className="flex flex-col sm:flex-row gap-3 mt-6">
@@ -1011,7 +1121,7 @@ export default function ProjectManager({
                   onClick={() =>
                     void copyApiKey()
                   }
-                  className="flex-1 px-4 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-medium flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-medium flex items-center justify-center gap-2 transition"
                 >
 
                   <Copy
@@ -1045,7 +1155,7 @@ export default function ProjectManager({
                       false
                     );
                   }}
-                  className="px-5 py-3 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800"
+                  className="px-5 py-3 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 transition"
                 >
                   I Saved It
                 </button>

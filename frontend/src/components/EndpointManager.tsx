@@ -36,6 +36,10 @@ import {
   type Project,
 } from "../api/projectsApi";
 
+import {
+  useAuth,
+} from "../context/AuthContext";
+
 // ==========================================================
 // PROPS
 // ==========================================================
@@ -91,6 +95,19 @@ const emptyForm:
 export default function EndpointManager({
   onEndpointsChanged,
 }: EndpointManagerProps) {
+  // ========================================================
+  // AUTH
+  // ========================================================
+
+  const {
+    user,
+  } =
+    useAuth();
+
+  const isDemo =
+    user?.role ===
+    "demo";
+
   // ========================================================
   // DATA
   // ========================================================
@@ -374,6 +391,13 @@ export default function EndpointManager({
 
   const openCreateModal =
     () => {
+      // Frontend demo guard.
+      // Backend authorization still provides the real
+      // security boundary.
+      if (isDemo) {
+        return;
+      }
+
       setError(
         ""
       );
@@ -402,6 +426,10 @@ export default function EndpointManager({
         FormEvent<HTMLFormElement>
     ) => {
       event.preventDefault();
+
+      if (isDemo) {
+        return;
+      }
 
       try {
         setCreating(
@@ -486,6 +514,10 @@ export default function EndpointManager({
       endpoint:
         WebhookEndpoint
     ) => {
+      if (isDemo) {
+        return;
+      }
+
       setEditingEndpoint(
         endpoint
       );
@@ -523,7 +555,10 @@ export default function EndpointManager({
     ) => {
       event.preventDefault();
 
-      if (!editingEndpoint) {
+      if (
+        isDemo ||
+        !editingEndpoint
+      ) {
         return;
       }
 
@@ -584,6 +619,10 @@ export default function EndpointManager({
       endpoint:
         WebhookEndpoint
     ) => {
+      if (isDemo) {
+        return;
+      }
+
       try {
         setTogglingEndpointId(
           endpoint.endpointId
@@ -625,6 +664,10 @@ export default function EndpointManager({
       endpoint:
         WebhookEndpoint
     ) => {
+      if (isDemo) {
+        return;
+      }
+
       const confirmed =
         window.confirm(
           `Delete endpoint "${endpoint.name}"?\n\nWebhook events will no longer be deliverable to this endpoint.`
@@ -730,17 +773,28 @@ export default function EndpointManager({
 
         <div>
 
-          <p className="text-emerald-400 text-xs font-semibold tracking-[0.18em] mb-2">
-            WEBHOOK CONFIGURATION
-          </p>
+          <div className="flex flex-wrap items-center gap-3 mb-2">
+
+            <p className="text-emerald-400 text-xs font-semibold tracking-[0.18em]">
+              WEBHOOK CONFIGURATION
+            </p>
+
+            {isDemo && (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-semibold uppercase tracking-wide">
+                Demo Mode
+              </span>
+            )}
+
+          </div>
 
           <h2 className="text-3xl font-bold">
             Endpoints
           </h2>
 
           <p className="text-zinc-500 mt-2 max-w-2xl">
-            Configure target URLs, request methods, retry
-            policies and endpoint availability.
+            {isDemo
+              ? "Explore preconfigured webhook destinations, delivery methods and retry policies."
+              : "Configure target URLs, request methods, retry policies and endpoint availability."}
           </p>
 
         </div>
@@ -757,7 +811,7 @@ export default function EndpointManager({
             disabled={
               refreshing
             }
-            className="h-11 px-4 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 flex items-center gap-2 text-sm disabled:opacity-60"
+            className="h-11 px-4 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 flex items-center gap-2 text-sm disabled:opacity-60 transition"
           >
 
             <RefreshCw
@@ -775,31 +829,52 @@ export default function EndpointManager({
 
           </button>
 
-          <button
-            type="button"
-            onClick={
-              openCreateModal
-            }
-            disabled={
-              projects.length ===
-              0
-            }
-            className="h-11 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white flex items-center gap-2 text-sm font-medium"
-          >
-
-            <Plus
-              size={
-                17
+          {!isDemo && (
+            <button
+              type="button"
+              onClick={
+                openCreateModal
               }
-            />
+              disabled={
+                projects.length ===
+                0
+              }
+              className="h-11 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white flex items-center gap-2 text-sm font-medium transition"
+            >
 
-            Create Endpoint
+              <Plus
+                size={
+                  17
+                }
+              />
 
-          </button>
+              Create Endpoint
+
+            </button>
+          )}
 
         </div>
 
       </div>
+
+      {/* ====================================================
+          DEMO NOTICE
+      ==================================================== */}
+
+      {isDemo && (
+        <div className="mb-6 px-5 py-4 rounded-xl bg-cyan-500/5 border border-cyan-500/20">
+
+          <p className="text-sm font-medium text-cyan-400">
+            Read-only Demo
+          </p>
+
+          <p className="text-sm text-zinc-500 mt-1">
+            Endpoint creation, editing, activation changes and
+            deletion are disabled for this account.
+          </p>
+
+        </div>
+      )}
 
       {/* ====================================================
           ERROR
@@ -820,8 +895,9 @@ export default function EndpointManager({
           0 && (
           <div className="mb-6 bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-xl px-5 py-4">
 
-            You need to create a project before creating a
-            webhook endpoint.
+            {isDemo
+              ? "Demo project configuration is currently unavailable."
+              : "You need to create a project before creating a webhook endpoint."}
 
           </div>
         )}
@@ -897,8 +973,9 @@ export default function EndpointManager({
           </p>
 
           <p className="text-sm text-zinc-600 mt-2">
-            Create an endpoint to start delivering webhook
-            events.
+            {isDemo
+              ? "Demo endpoint data is currently unavailable."
+              : "Create an endpoint to start delivering webhook events."}
           </p>
 
         </div>
@@ -937,9 +1014,19 @@ export default function EndpointManager({
 
                     <div className="min-w-0">
 
-                      <h3 className="font-semibold text-lg truncate">
-                        {endpoint.name}
-                      </h3>
+                      <div className="flex flex-wrap items-center gap-2">
+
+                        <h3 className="font-semibold text-lg truncate">
+                          {endpoint.name}
+                        </h3>
+
+                        {isDemo && (
+                          <span className="inline-flex px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-500 text-[10px] uppercase tracking-wide">
+                            Read Only
+                          </span>
+                        )}
+
+                      </div>
 
                       <p className="font-mono text-xs text-zinc-600 mt-1 truncate">
                         {endpoint.endpointId}
@@ -949,7 +1036,9 @@ export default function EndpointManager({
 
                   </div>
 
-                  {/* STATUS */}
+                  {/* ========================================
+                      STATUS
+                  ======================================== */}
 
                   <span
                     className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-semibold uppercase ${
@@ -982,7 +1071,7 @@ export default function EndpointManager({
                 </div>
 
                 {/* ==========================================
-                    TARGET
+                    TARGET URL
                 ========================================== */}
 
                 <div className="bg-black border border-zinc-800 rounded-xl p-4 mb-4">
@@ -1003,7 +1092,7 @@ export default function EndpointManager({
                 </div>
 
                 {/* ==========================================
-                    CONFIG
+                    CONFIGURATION
                 ========================================== */}
 
                 <div className="grid grid-cols-3 gap-3 mb-5">
@@ -1033,6 +1122,10 @@ export default function EndpointManager({
 
                 </div>
 
+                {/* ==========================================
+                    CREATED
+                ========================================== */}
+
                 <p className="text-xs text-zinc-600 mb-5">
                   Created{" "}
                   {new Date(
@@ -1044,103 +1137,123 @@ export default function EndpointManager({
                     ACTIONS
                 ========================================== */}
 
-                <div className="flex flex-wrap gap-2">
+                {!isDemo ? (
+                  <div className="flex flex-wrap gap-2">
 
-                  {/* EDIT */}
+                    {/* ======================================
+                        EDIT
+                    ====================================== */}
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openEditModal(
-                        endpoint
-                      )
-                    }
-                    className="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-sm flex items-center gap-2"
-                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openEditModal(
+                          endpoint
+                        )
+                      }
+                      className="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-sm flex items-center gap-2 transition"
+                    >
 
-                    <Edit3
+                      <Edit3
+                        size={
+                          14
+                        }
+                      />
+
+                      Edit
+
+                    </button>
+
+                    {/* ======================================
+                        ENABLE / DISABLE
+                    ====================================== */}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleToggle(
+                          endpoint
+                        )
+                      }
+                      disabled={
+                        togglingEndpointId ===
+                        endpoint.endpointId
+                      }
+                      className={`px-3 py-2 rounded-lg border text-sm flex items-center gap-2 transition ${
+                        endpoint.active
+                          ? "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20"
+                          : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
+                      }`}
+                    >
+
+                      {endpoint.active ? (
+                        <PauseCircle
+                          size={
+                            14
+                          }
+                        />
+                      ) : (
+                        <PlayCircle
+                          size={
+                            14
+                          }
+                        />
+                      )}
+
+                      {togglingEndpointId ===
+                      endpoint.endpointId
+                        ? "Updating..."
+                        : endpoint.active
+                          ? "Disable"
+                          : "Enable"}
+
+                    </button>
+
+                    {/* ======================================
+                        DELETE
+                    ====================================== */}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleDelete(
+                          endpoint
+                        )
+                      }
+                      disabled={
+                        deletingEndpointId ===
+                        endpoint.endpointId
+                      }
+                      className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-sm flex items-center gap-2 transition"
+                    >
+
+                      <Trash2
+                        size={
+                          14
+                        }
+                      />
+
+                      {deletingEndpointId ===
+                      endpoint.endpointId
+                        ? "Deleting..."
+                        : "Delete"}
+
+                    </button>
+
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-zinc-600">
+
+                    <Globe2
                       size={
                         14
                       }
                     />
 
-                    Edit
+                    Endpoint configuration is read-only in Demo Mode
 
-                  </button>
-
-                  {/* ENABLE / DISABLE */}
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void handleToggle(
-                        endpoint
-                      )
-                    }
-                    disabled={
-                      togglingEndpointId ===
-                      endpoint.endpointId
-                    }
-                    className={`px-3 py-2 rounded-lg border text-sm flex items-center gap-2 ${
-                      endpoint.active
-                        ? "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20"
-                        : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20"
-                    }`}
-                  >
-
-                    {endpoint.active ? (
-                      <PauseCircle
-                        size={
-                          14
-                        }
-                      />
-                    ) : (
-                      <PlayCircle
-                        size={
-                          14
-                        }
-                      />
-                    )}
-
-                    {togglingEndpointId ===
-                    endpoint.endpointId
-                      ? "Updating..."
-                      : endpoint.active
-                        ? "Disable"
-                        : "Enable"}
-
-                  </button>
-
-                  {/* DELETE */}
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void handleDelete(
-                        endpoint
-                      )
-                    }
-                    disabled={
-                      deletingEndpointId ===
-                      endpoint.endpointId
-                    }
-                    className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-sm flex items-center gap-2"
-                  >
-
-                    <Trash2
-                      size={
-                        14
-                      }
-                    />
-
-                    {deletingEndpointId ===
-                    endpoint.endpointId
-                      ? "Deleting..."
-                      : "Delete"}
-
-                  </button>
-
-                </div>
+                  </div>
+                )}
 
               </div>
             )
@@ -1153,7 +1266,8 @@ export default function EndpointManager({
           CREATE MODAL
       ==================================================== */}
 
-      {showCreateModal && (
+      {showCreateModal &&
+        !isDemo && (
         <EndpointFormModal
           title="Create Endpoint"
           subtitle="Configure a new webhook delivery destination."
@@ -1186,10 +1300,13 @@ export default function EndpointManager({
           EDIT MODAL
       ==================================================== */}
 
-      {editingEndpoint && (
+      {editingEndpoint &&
+        !isDemo && (
         <EndpointFormModal
           title="Edit Endpoint"
-          subtitle={editingEndpoint.endpointId}
+          subtitle={
+            editingEndpoint.endpointId
+          }
           form={
             editForm
           }
@@ -1221,7 +1338,8 @@ export default function EndpointManager({
           SIGNING SECRET MODAL
       ==================================================== */}
 
-      {signingSecret && (
+      {signingSecret &&
+        !isDemo && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
 
           <div className="absolute inset-0 bg-black/85 backdrop-blur-sm" />
@@ -1275,7 +1393,7 @@ export default function EndpointManager({
               </div>
 
               <div className="mt-4 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm">
-                ⚠ {secretWarning}
+                {secretWarning}
               </div>
 
               <div className="flex flex-col sm:flex-row gap-3 mt-6">
@@ -1285,7 +1403,7 @@ export default function EndpointManager({
                   onClick={() =>
                     void copySigningSecret()
                   }
-                  className="flex-1 px-4 py-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 font-medium flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 font-medium flex items-center justify-center gap-2 transition"
                 >
 
                   <Copy
@@ -1319,7 +1437,7 @@ export default function EndpointManager({
                       false
                     );
                   }}
-                  className="px-5 py-3 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800"
+                  className="px-5 py-3 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 transition"
                 >
                   I Saved It
                 </button>
@@ -1394,6 +1512,10 @@ function EndpointFormModal({
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
 
+      {/* ====================================================
+          BACKDROP
+      ==================================================== */}
+
       <button
         type="button"
         aria-label="Close modal"
@@ -1403,9 +1525,15 @@ function EndpointFormModal({
         className="absolute inset-0 bg-black/80 backdrop-blur-sm"
       />
 
+      {/* ====================================================
+          MODAL
+      ==================================================== */}
+
       <div className="relative w-full max-w-xl max-h-[92vh] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl">
 
-        {/* HEADER */}
+        {/* ==================================================
+            HEADER
+        ================================================== */}
 
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
 
@@ -1426,7 +1554,7 @@ function EndpointFormModal({
             onClick={
               onClose
             }
-            className="w-9 h-9 shrink-0 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center hover:bg-zinc-800"
+            className="w-9 h-9 shrink-0 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center hover:bg-zinc-800 transition"
           >
             <X
               size={
@@ -1437,7 +1565,9 @@ function EndpointFormModal({
 
         </div>
 
-        {/* FORM */}
+        {/* ==================================================
+            FORM
+        ================================================== */}
 
         <form
           onSubmit={
@@ -1446,7 +1576,9 @@ function EndpointFormModal({
           className="p-6 space-y-5"
         >
 
-          {/* NAME */}
+          {/* ================================================
+              NAME
+          ================================================ */}
 
           <div>
 
@@ -1482,7 +1614,9 @@ function EndpointFormModal({
 
           </div>
 
-          {/* PROJECT */}
+          {/* ================================================
+              PROJECT
+          ================================================ */}
 
           <div>
 
@@ -1542,7 +1676,9 @@ function EndpointFormModal({
 
           </div>
 
-          {/* URL */}
+          {/* ================================================
+              TARGET URL
+          ================================================ */}
 
           <div>
 
@@ -1576,7 +1712,9 @@ function EndpointFormModal({
 
           </div>
 
-          {/* METHOD / RETRIES */}
+          {/* ================================================
+              METHOD / RETRIES
+          ================================================ */}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
@@ -1664,7 +1802,9 @@ function EndpointFormModal({
 
           </div>
 
-          {/* RETRY DESCRIPTION */}
+          {/* ================================================
+              RETRY DESCRIPTION
+          ================================================ */}
 
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
 
@@ -1699,7 +1839,9 @@ function EndpointFormModal({
 
           </div>
 
-          {/* SUBMIT */}
+          {/* ================================================
+              SUBMIT
+          ================================================ */}
 
           <button
             type="submit"

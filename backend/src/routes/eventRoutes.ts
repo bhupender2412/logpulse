@@ -13,6 +13,10 @@ import {
 } from "../middleware/authMiddleware";
 
 import {
+  requireAdmin,
+} from "../middleware/roleMiddleware";
+
+import {
   EndpointModel,
 } from "../models/Endpoint";
 
@@ -1913,9 +1917,11 @@ router.get(
 // Creates a completely NEW webhook event.
 // ==========================================================
 
+
 router.post(
   "/:eventId/redeliver",
   requireAuth,
+  requireAdmin,
   async (
     req: AuthenticatedRequest,
     res: Response

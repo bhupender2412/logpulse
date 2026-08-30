@@ -162,6 +162,10 @@ export default function Dashboard() {
   } =
     useAuth();
 
+  const isDemo =
+    user?.role ===
+    "demo";
+
   // ========================================================
   // ACTIVE CONSOLE VIEW
   // ========================================================
@@ -603,6 +607,12 @@ export default function Dashboard() {
                     Console
                   </span>
 
+                  {isDemo && (
+                    <span className="inline-flex px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-[10px] text-cyan-400 font-semibold uppercase tracking-wider">
+                      Demo Mode
+                    </span>
+                  )}
+
                 </div>
 
                 <p className="text-sm text-zinc-500">
@@ -838,6 +848,37 @@ export default function Dashboard() {
             </div>
 
           </div>
+
+          {/* ==================================================
+              DEMO MODE NOTICE
+          ================================================== */}
+
+          {isDemo && (
+            <div className="mb-6 px-5 py-4 rounded-xl bg-cyan-500/5 border border-cyan-500/20">
+
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+
+                <div>
+
+                  <p className="text-sm font-medium text-cyan-400">
+                    Demo Mode
+                  </p>
+
+                  <p className="text-sm text-zinc-500 mt-1">
+                    You are viewing preloaded webhook delivery data in a
+                    read-only environment.
+                  </p>
+
+                </div>
+
+                <span className="inline-flex self-start sm:self-auto px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-500 font-semibold uppercase tracking-wide">
+                  Administrative actions disabled
+                </span>
+
+              </div>
+
+            </div>
+          )}
 
           {/* ==================================================
               ERROR

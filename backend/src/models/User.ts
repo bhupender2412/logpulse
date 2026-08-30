@@ -1,38 +1,91 @@
 import mongoose from "mongoose";
 
-const UserSchema = new mongoose.Schema(
-  {
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
+// ==========================================================
+// USER ROLES
+// ==========================================================
 
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-      lowercase: true,
-      trim: true,
-      index: true,
-    },
+export const USER_ROLES = [
+  "admin",
+  "demo",
+] as const;
 
-    password: {
-      type: String,
-      required: true,
-      minlength: 6,
-    },
+export type UserRole =
+  (typeof USER_ROLES)[number];
 
-    role: {
-      type: String,
-      enum: ["admin"],
-      default: "admin",
+// ==========================================================
+// USER SCHEMA
+// ==========================================================
+
+const UserSchema =
+  new mongoose.Schema(
+    {
+      // ----------------------------------------------------
+      // NAME
+      // ----------------------------------------------------
+
+      name: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+
+      // ----------------------------------------------------
+      // EMAIL
+      // ----------------------------------------------------
+
+      email: {
+        type: String,
+        required: true,
+        unique: true,
+        lowercase: true,
+        trim: true,
+        index: true,
+      },
+
+      // ----------------------------------------------------
+      // PASSWORD
+      // ----------------------------------------------------
+
+      password: {
+        type: String,
+        required: true,
+        minlength: 6,
+      },
+
+      // ----------------------------------------------------
+      // ROLE
+      //
+      // admin:
+      // Full access to PulseEngine.
+      //
+      // demo:
+      // Portfolio/recruiter account.
+      // Read access will be allowed while sensitive and
+      // destructive operations will be restricted.
+      // ----------------------------------------------------
+
+      role: {
+        type: String,
+        enum:
+          USER_ROLES,
+        default:
+          "admin",
+        required:
+          true,
+      },
     },
-  },
-  {
-    timestamps: true,
-  }
-);
+    {
+      timestamps:
+        true,
+    }
+  );
+
+// ==========================================================
+// MODEL
+// ==========================================================
 
 export const UserModel =
-  mongoose.model("User", UserSchema);
+  mongoose.model(
+    "User",
+    UserSchema
+  );

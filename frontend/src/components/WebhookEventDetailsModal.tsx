@@ -21,6 +21,10 @@ import {
   type WebhookEvent,
 } from "../api/eventsApi";
 
+import {
+  useAuth,
+} from "../context/AuthContext";
+
 // ==========================================================
 // PROPS
 // ==========================================================
@@ -54,7 +58,6 @@ function formatValue(
     typeof value ===
     "string"
   ) {
-    // Try formatting JSON response strings.
     try {
       return JSON.stringify(
         JSON.parse(
@@ -90,6 +93,23 @@ export default function WebhookEventDetailsModal({
   onClose,
   onRedelivered,
 }: Props) {
+  // ========================================================
+  // AUTH
+  // ========================================================
+
+  const {
+    user,
+  } =
+    useAuth();
+
+  const isDemo =
+    user?.role ===
+    "demo";
+
+  // ========================================================
+  // EVENT
+  // ========================================================
+
   const [
     event,
     setEvent,
@@ -98,6 +118,10 @@ export default function WebhookEventDetailsModal({
       null
     );
 
+  // ========================================================
+  // REDELIVERY HISTORY
+  // ========================================================
+
   const [
     redeliveryHistory,
     setRedeliveryHistory,
@@ -105,6 +129,10 @@ export default function WebhookEventDetailsModal({
     useState<RedeliveryHistoryResponse | null>(
       null
     );
+
+  // ========================================================
+  // UI STATE
+  // ========================================================
 
   const [
     loading,
@@ -142,113 +170,141 @@ export default function WebhookEventDetailsModal({
   // LOAD EVENT
   // ========================================================
 
-  useEffect(() => {
-    if (!eventId) {
-      setEvent(
-        null
-      );
+  useEffect(
+    () => {
+      if (!eventId) {
+        setEvent(
+          null
+        );
 
-      setRedeliveryHistory(
-        null
-      );
+        setRedeliveryHistory(
+          null
+        );
 
-      return;
-    }
+        setError(
+          ""
+        );
 
-    const load =
-      async () => {
-        try {
-          setLoading(
-            true
-          );
+        return;
+      }
 
-          setError(
-            ""
-          );
-
-          const eventResponse =
-            await getEvent(
-              eventId
+      const load =
+        async () => {
+          try {
+            setLoading(
+              true
             );
 
-          setEvent(
-            eventResponse.event
-          );
+            setError(
+              ""
+            );
 
-          // Redelivery history is useful mainly for failed
-          // source events, but safe to request for any event.
-          try {
-            const history =
-              await getRedeliveries(
+            // ==============================================
+            // EVENT DETAILS
+            // ==============================================
+
+            const eventResponse =
+              await getEvent(
                 eventId
               );
 
-            setRedeliveryHistory(
-              history
+            setEvent(
+              eventResponse.event
             );
-          } catch {
-            setRedeliveryHistory(
-              null
+
+            // ==============================================
+            // REDELIVERY HISTORY
+            // ==============================================
+
+            try {
+              const history =
+                await getRedeliveries(
+                  eventId
+                );
+
+              setRedeliveryHistory(
+                history
+              );
+            } catch (
+              historyError
+            ) {
+              console.error(
+                "Load Redelivery History Error:",
+                historyError
+              );
+
+              setRedeliveryHistory(
+                null
+              );
+            }
+          } catch (err) {
+            console.error(
+              "Load Webhook Event Error:",
+              err
+            );
+
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Failed to load webhook event"
+            );
+          } finally {
+            setLoading(
+              false
             );
           }
-        } catch (err) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Failed to load webhook event"
-          );
-        } finally {
-          setLoading(
-            false
-          );
-        }
-      };
+        };
 
-    void load();
-  }, [
-    eventId,
-  ]);
+      void load();
+    },
+    [
+      eventId,
+    ]
+  );
 
   // ========================================================
   // ESCAPE TO CLOSE
   // ========================================================
 
-  useEffect(() => {
-    if (!eventId) {
-      return;
-    }
+  useEffect(
+    () => {
+      if (!eventId) {
+        return;
+      }
 
-    const handleKeyDown =
-      (
-        keyboardEvent:
-          KeyboardEvent
-      ) => {
-        if (
-          keyboardEvent.key ===
-          "Escape"
-        ) {
-          onClose();
-        }
-      };
+      const handleKeyDown =
+        (
+          keyboardEvent:
+            KeyboardEvent
+        ) => {
+          if (
+            keyboardEvent.key ===
+            "Escape"
+          ) {
+            onClose();
+          }
+        };
 
-    window.addEventListener(
-      "keydown",
-      handleKeyDown
-    );
-
-    return () => {
-      window.removeEventListener(
+      window.addEventListener(
         "keydown",
         handleKeyDown
       );
-    };
-  }, [
-    eventId,
-    onClose,
-  ]);
+
+      return () => {
+        window.removeEventListener(
+          "keydown",
+          handleKeyDown
+        );
+      };
+    },
+    [
+      eventId,
+      onClose,
+    ]
+  );
 
   // ========================================================
-  // COPY
+  // COPY VALUE
   // ========================================================
 
   const copyValue =
@@ -275,7 +331,14 @@ export default function WebhookEventDetailsModal({
           },
           1500
         );
-      } catch {
+      } catch (
+        copyError
+      ) {
+        console.error(
+          "Clipboard Error:",
+          copyError
+        );
+
         setCopied(
           ""
         );
@@ -288,6 +351,17 @@ export default function WebhookEventDetailsModal({
 
   const handleRedeliver =
     async () => {
+      // ====================================================
+      // DEMO SAFETY
+      //
+      // Backend also enforces this with requireAdmin.
+      // This frontend guard prevents unnecessary requests.
+      // ====================================================
+
+      if (isDemo) {
+        return;
+      }
+
       if (
         !event ||
         event.status !==
@@ -305,11 +379,18 @@ export default function WebhookEventDetailsModal({
           ""
         );
 
+        // ================================================
+        // CREATE NEW REDELIVERY EVENT
+        // ================================================
+
         await redeliverEvent(
           event.eventId
         );
 
-        // Refresh redelivery history.
+        // ================================================
+        // REFRESH HISTORY
+        // ================================================
+
         const history =
           await getRedeliveries(
             event.eventId
@@ -319,8 +400,17 @@ export default function WebhookEventDetailsModal({
           history
         );
 
+        // ================================================
+        // REFRESH DASHBOARD
+        // ================================================
+
         onRedelivered?.();
       } catch (err) {
+        console.error(
+          "Webhook Redelivery Error:",
+          err
+        );
+
         setError(
           err instanceof Error
             ? err.message
@@ -341,10 +431,16 @@ export default function WebhookEventDetailsModal({
     return null;
   }
 
+  // ========================================================
+  // UI
+  // ========================================================
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 md:p-6">
 
-      {/* BACKDROP */}
+      {/* ====================================================
+          BACKDROP
+      ==================================================== */}
 
       <button
         type="button"
@@ -355,7 +451,9 @@ export default function WebhookEventDetailsModal({
         className="absolute inset-0 bg-black/80 backdrop-blur-sm"
       />
 
-      {/* MODAL */}
+      {/* ====================================================
+          MODAL
+      ==================================================== */}
 
       <div className="relative w-full max-w-6xl max-h-[92vh] overflow-hidden bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl">
 
@@ -367,9 +465,19 @@ export default function WebhookEventDetailsModal({
 
           <div className="min-w-0">
 
-            <p className="text-xs text-emerald-400 font-semibold tracking-widest uppercase">
-              Payload Inspector
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+
+              <p className="text-xs text-emerald-400 font-semibold tracking-widest uppercase">
+                Payload Inspector
+              </p>
+
+              {isDemo && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-semibold uppercase tracking-wide">
+                  Demo Mode
+                </span>
+              )}
+
+            </div>
 
             <h2 className="text-lg font-semibold mt-1">
               Webhook Event Details
@@ -382,7 +490,7 @@ export default function WebhookEventDetailsModal({
             onClick={
               onClose
             }
-            className="w-9 h-9 shrink-0 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 flex items-center justify-center"
+            className="w-9 h-9 shrink-0 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 flex items-center justify-center transition"
           >
             <X
               size={
@@ -399,6 +507,10 @@ export default function WebhookEventDetailsModal({
 
         <div className="overflow-y-auto max-h-[calc(92vh-70px)]">
 
+          {/* ==================================================
+              LOADING
+          ================================================== */}
+
           {loading ? (
             <div className="h-[420px] flex flex-col items-center justify-center text-zinc-500">
 
@@ -414,17 +526,47 @@ export default function WebhookEventDetailsModal({
             </div>
           ) : error &&
             !event ? (
+            // ==============================================
+            // LOAD ERROR
+            // ==============================================
+
             <div className="p-8 text-red-400">
               {error}
             </div>
           ) : event ? (
+            // ==============================================
+            // EVENT CONTENT
+            // ==============================================
+
             <div className="p-5 md:p-6">
 
-              {/* ERROR */}
+              {/* ============================================
+                  ERROR
+              ============================================ */}
 
               {error && (
                 <div className="mb-5 bg-red-500/10 border border-red-500/30 text-red-400 rounded-xl px-4 py-3 text-sm">
                   {error}
+                </div>
+              )}
+
+              {/* ============================================
+                  DEMO NOTICE
+              ============================================ */}
+
+              {isDemo && (
+                <div className="mb-6 bg-cyan-500/5 border border-cyan-500/20 rounded-xl px-5 py-4">
+
+                  <p className="text-sm font-medium text-cyan-400">
+                    Read-only Demo
+                  </p>
+
+                  <p className="text-sm text-zinc-500 mt-1">
+                    Event payloads, responses and delivery history
+                    are available for inspection. Manual redelivery
+                    is disabled for the demo account.
+                  </p>
+
                 </div>
               )}
 
@@ -481,7 +623,7 @@ export default function WebhookEventDetailsModal({
               </div>
 
               {/* ============================================
-                  EVENT META
+                  EVENT INFORMATION
               ============================================ */}
 
               <section className="bg-black border border-zinc-800 rounded-xl mb-6">
@@ -562,7 +704,9 @@ export default function WebhookEventDetailsModal({
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
 
-                {/* PAYLOAD */}
+                {/* ==========================================
+                    REQUEST PAYLOAD
+                ========================================== */}
 
                 <CodePanel
                   title="Request Payload"
@@ -585,7 +729,9 @@ export default function WebhookEventDetailsModal({
                   }
                 />
 
-                {/* RESPONSE */}
+                {/* ==========================================
+                    RESPONSE BODY
+                ========================================== */}
 
                 <CodePanel
                   title="Response Body"
@@ -611,7 +757,7 @@ export default function WebhookEventDetailsModal({
               </div>
 
               {/* ============================================
-                  ERROR MESSAGE
+                  DELIVERY ERROR
               ============================================ */}
 
               {event.error && (
@@ -718,20 +864,31 @@ export default function WebhookEventDetailsModal({
 
                               <span className="text-zinc-500">
                                 HTTP{" "}
-                                <span className="text-zinc-300">
+
+                                <span
+                                  className={
+                                    attempt.status ===
+                                    "success"
+                                      ? "text-emerald-400"
+                                      : "text-red-400"
+                                  }
+                                >
                                   {attempt.statusCode ??
                                     "—"}
                                 </span>
+
                               </span>
 
                               <span className="text-zinc-500">
                                 Latency{" "}
+
                                 <span className="text-zinc-300">
                                   {attempt.latencyMs !==
                                   null
                                     ? `${attempt.latencyMs}ms`
                                     : "—"}
                                 </span>
+
                               </span>
 
                             </div>
@@ -780,7 +937,7 @@ export default function WebhookEventDetailsModal({
                             className="p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
                           >
 
-                            <div>
+                            <div className="min-w-0">
 
                               <p className="font-mono text-xs text-zinc-300 break-all">
                                 {redelivery.eventId}
@@ -794,7 +951,7 @@ export default function WebhookEventDetailsModal({
 
                             </div>
 
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-4 shrink-0">
 
                               <span
                                 className={`text-xs uppercase font-semibold ${
@@ -846,36 +1003,55 @@ export default function WebhookEventDetailsModal({
 
                 </div>
 
+                {/* ==========================================
+                    FAILED EVENT ACTION
+                ========================================== */}
+
                 {event.status ===
-                  "failed" && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void handleRedeliver()
-                    }
-                    disabled={
-                      retrying
-                    }
-                    className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-900 disabled:text-emerald-400 font-medium transition"
-                  >
+                  "failed" &&
+                  (
+                    isDemo ? (
+                      <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-sm text-zinc-500">
 
-                    <RotateCcw
-                      size={
-                        17
-                      }
-                      className={
-                        retrying
-                          ? "animate-spin"
-                          : ""
-                      }
-                    />
+                        <RotateCcw
+                          size={
+                            16
+                          }
+                        />
 
-                    {retrying
-                      ? "Queueing..."
-                      : "Retry Now"}
+                        Redelivery disabled in Demo Mode
 
-                  </button>
-                )}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleRedeliver()
+                        }
+                        disabled={
+                          retrying
+                        }
+                        className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-900 disabled:text-emerald-400 font-medium transition"
+                      >
+
+                        <RotateCcw
+                          size={
+                            17
+                          }
+                          className={
+                            retrying
+                              ? "animate-spin"
+                              : ""
+                          }
+                        />
+
+                        {retrying
+                          ? "Queueing..."
+                          : "Retry Now"}
+
+                      </button>
+                    )
+                  )}
 
               </div>
 
@@ -996,7 +1172,7 @@ function MetaRow({
           onClick={
             copy
           }
-          className="text-xs text-zinc-500 hover:text-white flex items-center gap-1.5"
+          className="text-xs text-zinc-500 hover:text-white flex items-center gap-1.5 transition"
         >
 
           <Copy
@@ -1052,7 +1228,7 @@ function CodePanel({
           onClick={
             onCopy
           }
-          className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-white"
+          className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-white transition"
         >
 
           <Copy

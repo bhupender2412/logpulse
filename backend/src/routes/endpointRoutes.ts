@@ -13,6 +13,10 @@ import {
 } from "../middleware/authMiddleware";
 
 import {
+  requireAdmin,
+} from "../middleware/roleMiddleware";
+
+import {
   EndpointModel,
 } from "../models/Endpoint";
 
@@ -20,7 +24,8 @@ import {
   ProjectModel,
 } from "../models/Project";
 
-const router = Router();
+const router =
+  Router();
 
 // ==========================================================
 // CREATE ENDPOINT VALIDATION
@@ -191,12 +196,15 @@ function normalizeParam(
 //
 // POST /api/v1/endpoints
 //
-// JWT PROTECTED
+// ADMIN ONLY
+//
+// Demo users are not allowed to create endpoints.
 // ==========================================================
 
 router.post(
   "/",
   requireAuth,
+  requireAdmin,
   async (
     req: AuthenticatedRequest,
     res: Response
@@ -213,7 +221,9 @@ router.post(
         return res
           .status(401)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Authentication required",
           });
@@ -232,7 +242,9 @@ router.post(
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               result.error.format(),
           });
@@ -244,7 +256,8 @@ router.post(
         targetUrl,
         method,
         maxRetries,
-      } = result.data;
+      } =
+        result.data;
 
       // ====================================================
       // VALIDATE URL
@@ -258,7 +271,9 @@ router.post(
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Target URL must be a valid HTTP or HTTPS URL",
           });
@@ -271,6 +286,7 @@ router.post(
       const project =
         await ProjectModel.findOne({
           projectId,
+
           createdBy:
             userId,
         });
@@ -279,7 +295,9 @@ router.post(
         return res
           .status(404)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Project not found or you do not have access to it",
           });
@@ -316,7 +334,8 @@ router.post(
 
           signingSecret,
 
-          active: true,
+          active:
+            true,
 
           createdBy:
             userId,
@@ -329,7 +348,8 @@ router.post(
       return res
         .status(201)
         .json({
-          success: true,
+          success:
+            true,
 
           endpoint: {
             id:
@@ -374,7 +394,9 @@ router.post(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             "Failed to create endpoint",
         });
@@ -387,7 +409,9 @@ router.post(
 //
 // GET /api/v1/endpoints
 //
-// JWT PROTECTED
+// AUTHENTICATED USERS
+//
+// Admin and demo users can view their own endpoints.
 // ==========================================================
 
 router.get(
@@ -405,7 +429,9 @@ router.get(
         return res
           .status(401)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Authentication required",
           });
@@ -417,14 +443,16 @@ router.get(
             userId,
         })
           .sort({
-            createdAt: -1,
+            createdAt:
+              -1,
           })
           .lean();
 
       return res
         .status(200)
         .json({
-          success: true,
+          success:
+            true,
 
           count:
             endpoints.length,
@@ -440,7 +468,9 @@ router.get(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             "Failed to fetch endpoints",
         });
@@ -453,7 +483,9 @@ router.get(
 //
 // GET /api/v1/endpoints/:endpointId
 //
-// JWT PROTECTED
+// AUTHENTICATED USERS
+//
+// Admin and demo users can inspect their own endpoints.
 // ==========================================================
 
 router.get(
@@ -471,7 +503,9 @@ router.get(
         return res
           .status(401)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Authentication required",
           });
@@ -486,7 +520,9 @@ router.get(
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Endpoint ID is required",
           });
@@ -504,7 +540,9 @@ router.get(
         return res
           .status(404)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Endpoint not found",
           });
@@ -513,7 +551,9 @@ router.get(
       return res
         .status(200)
         .json({
-          success: true,
+          success:
+            true,
+
           endpoint,
         });
     } catch (error) {
@@ -525,7 +565,9 @@ router.get(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             "Failed to fetch endpoint",
         });
@@ -538,12 +580,16 @@ router.get(
 //
 // PATCH /api/v1/endpoints/:endpointId
 //
-// JWT PROTECTED
+// ADMIN ONLY
+//
+// Demo users must not be able to modify endpoint URLs,
+// retry configuration, HTTP methods or active state.
 // ==========================================================
 
 router.patch(
   "/:endpointId",
   requireAuth,
+  requireAdmin,
   async (
     req: AuthenticatedRequest,
     res: Response
@@ -560,7 +606,9 @@ router.patch(
         return res
           .status(401)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Authentication required",
           });
@@ -579,7 +627,9 @@ router.patch(
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Endpoint ID is required",
           });
@@ -598,7 +648,9 @@ router.patch(
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               result.error.format(),
           });
@@ -614,12 +666,15 @@ router.patch(
       if (
         Object.keys(
           updates
-        ).length === 0
+        ).length ===
+        0
       ) {
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "At least one field must be provided",
           });
@@ -638,7 +693,9 @@ router.patch(
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Target URL must be a valid HTTP or HTTPS URL",
           });
@@ -646,8 +703,6 @@ router.patch(
 
       // ====================================================
       // UPDATE ENDPOINT
-      //
-      // createdBy protects endpoint ownership.
       // ====================================================
 
       const endpoint =
@@ -663,7 +718,9 @@ router.patch(
               updates,
           },
           {
-            new: true,
+            new:
+              true,
+
             runValidators:
               true,
           }
@@ -677,7 +734,9 @@ router.patch(
         return res
           .status(404)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Endpoint not found",
           });
@@ -690,7 +749,8 @@ router.patch(
       return res
         .status(200)
         .json({
-          success: true,
+          success:
+            true,
 
           message:
             "Endpoint updated successfully",
@@ -706,7 +766,9 @@ router.patch(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             "Failed to update endpoint",
         });
@@ -714,19 +776,20 @@ router.patch(
   }
 );
 
-
-
 // ==========================================================
 // DELETE ENDPOINT
 //
 // DELETE /api/v1/endpoints/:endpointId
 //
-// JWT PROTECTED
+// ADMIN ONLY
+//
+// Demo users must not be able to delete endpoints.
 // ==========================================================
 
 router.delete(
   "/:endpointId",
   requireAuth,
+  requireAdmin,
   async (
     req: AuthenticatedRequest,
     res: Response
@@ -743,7 +806,9 @@ router.delete(
         return res
           .status(401)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Authentication required",
           });
@@ -762,7 +827,9 @@ router.delete(
         return res
           .status(400)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Endpoint ID is required",
           });
@@ -788,7 +855,9 @@ router.delete(
         return res
           .status(404)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               "Endpoint not found",
           });
@@ -801,7 +870,8 @@ router.delete(
       return res
         .status(200)
         .json({
-          success: true,
+          success:
+            true,
 
           message:
             "Endpoint deleted successfully",
@@ -826,7 +896,9 @@ router.delete(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             "Failed to delete endpoint",
         });

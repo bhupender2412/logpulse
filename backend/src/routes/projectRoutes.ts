@@ -9,6 +9,10 @@ import {
 } from "../middleware/authMiddleware";
 
 import {
+  requireAdmin,
+} from "../middleware/roleMiddleware";
+
+import {
   invalidateProjectApiKeyCache,
 } from "../middleware/apiKeyMiddleware";
 
@@ -57,7 +61,9 @@ function normalizeProjectId(
 //
 // POST /api/v1/projects
 //
-// JWT PROTECTED
+// ADMIN ONLY
+//
+// Demo users must not be able to create projects.
 //
 // Raw API key is returned only during creation.
 // MongoDB stores only its hash.
@@ -66,6 +72,7 @@ function normalizeProjectId(
 router.post(
   "/",
   requireAuth,
+  requireAdmin,
   async (
     req: AuthenticatedRequest,
     res: Response
@@ -284,7 +291,10 @@ router.post(
 //
 // GET /api/v1/projects
 //
-// JWT PROTECTED
+// AUTHENTICATED USERS
+//
+// Both admin and demo users can view projects belonging
+// to their own account.
 //
 // SECURITY:
 //
@@ -319,7 +329,7 @@ router.get(
       }
 
       // ====================================================
-      // FETCH PROJECTS
+      // FETCH USER PROJECTS
       // ====================================================
 
       const projects =
@@ -375,7 +385,9 @@ router.get(
 //
 // POST /api/v1/projects/:projectId/rotate-key
 //
-// JWT PROTECTED
+// ADMIN ONLY
+//
+// Demo users must never be able to rotate project API keys.
 //
 // SECURITY FLOW:
 //
@@ -391,6 +403,7 @@ router.get(
 router.post(
   "/:projectId/rotate-key",
   requireAuth,
+  requireAdmin,
   async (
     req: AuthenticatedRequest,
     res: Response
@@ -439,10 +452,8 @@ router.post(
       // ====================================================
       // FIND OWNED PROJECT
       //
-      // IMPORTANT:
-      //
       // apiKeyHash has select:false in Project schema.
-      // Therefore we must explicitly request it.
+      // Therefore it must be explicitly requested.
       // ====================================================
 
       const project =
@@ -480,7 +491,7 @@ router.post(
         !previousApiKeyHash
       ) {
         console.error(
-          "❌ Previous API key hash missing during rotation"
+          "Previous API key hash missing during rotation"
         );
 
         return res
@@ -535,7 +546,7 @@ router.post(
       );
 
       console.log(
-        "🔑 Project API key rotated"
+        "Project API key rotated"
       );
 
       console.log(
@@ -544,7 +555,7 @@ router.post(
       );
 
       console.log(
-        "🧹 Previous API-key Redis cache invalidated"
+        "Previous API-key Redis cache invalidated"
       );
 
       console.log(
@@ -598,7 +609,9 @@ router.post(
 //
 // DELETE /api/v1/projects/:projectId
 //
-// JWT PROTECTED
+// ADMIN ONLY
+//
+// Demo users must not be able to delete projects.
 //
 // SECURITY:
 //
@@ -609,6 +622,7 @@ router.post(
 router.delete(
   "/:projectId",
   requireAuth,
+  requireAdmin,
   async (
     req: AuthenticatedRequest,
     res: Response
@@ -656,8 +670,6 @@ router.delete(
 
       // ====================================================
       // FIND PROJECT
-      //
-      // IMPORTANT:
       //
       // Explicitly select hidden apiKeyHash.
       // ====================================================
@@ -719,12 +731,12 @@ router.delete(
       );
 
       console.log(
-        "🗑️ Project deleted:",
+        "Project deleted:",
         project.projectId
       );
 
       console.log(
-        "🧹 Project API-key Redis cache invalidated"
+        "Project API-key Redis cache invalidated"
       );
 
       console.log(
